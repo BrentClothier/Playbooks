@@ -7,8 +7,8 @@
     - name: Update apt cache and upgrade all packages
       ansible.builtin.apt:
         update_cache: yes
-        #upgrade: dist # Performs a 'dist-upgrade', which handles dependency changes
-
+        upgrade: yes 
+        
     - name: Check if a reboot is required
       ansible.builtin.stat:
         path: /var/run/reboot-required
