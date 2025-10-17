@@ -1,0 +1,16 @@
+---
+all:
+  children:
+    nodes:
+      hosts:
+        proxmox1.home:
+          ansible_host: 192.168.86.68
+        proxmox2.home:
+          ansible_host: 192.168.86.48
+        proxmox3.home:
+          ansible_host: 192.168.86.34
+    containers:
+      hosts:
+        mealie.home:
+          ansible_host: 192.168.86.67
+
