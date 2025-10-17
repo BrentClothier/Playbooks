@@ -1,5 +1,5 @@
 ---
-- hosts: servers
+- hosts: containers
   gather_facts: yes
   become: yes # Run tasks with sudo privileges
 
