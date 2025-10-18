@@ -22,7 +22,7 @@ all:
         NFS.home:
           ansible_host: 192.168.86.82
         nginx.home:
-          ansible_host: 192.168.85.47
+          ansible_host: 192.168.86.47
         romm.home:
           ansible_host: 192.168.86.17
         servarr.home:
