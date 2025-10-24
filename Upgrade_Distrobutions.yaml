@@ -1,32 +1,52 @@
 ---
-- name: Upgrade Ubuntu distribution
-  hosts: containers # Replace with your inventory group or hostname
+- name: Upgrade Ubuntu major version
+  hosts: your_ubuntu_servers # Replace with your target host group
   become: yes # Run tasks with root privileges
+  vars:
+    # Set to true to automatically answer 'yes' to prompts during the upgrade
+    # Use with caution and ensure you understand the implications.
+    auto_confirm_upgrade: true 
 
   tasks:
-    - name: Ensure update-manager-core is installed
+    - name: Ensure all packages are up-to-date before major upgrade
+      ansible.builtin.apt:
+        update_cache: yes
+        upgrade: dist # Performs a dist-upgrade to ensure all packages are latest
+      register: apt_upgrade_result
+      notify: Check for reboot
+
+    - name: Install update-manager-core if not present
       ansible.builtin.apt:
         name: update-manager-core
         state: present
-        update_cache: yes
 
-    - name: Perform a release upgrade
-      ansible.builtin.command: /usr/bin/do-release-upgrade -f DistUpgradeViewNonInteractive
+    - name: Run do-release-upgrade
+      ansible.builtin.shell: |
+        {% if auto_confirm_upgrade %}
+        do-release-upgrade -f DistUpgradeViewNonInteractive
+        {% else %}
+        do-release-upgrade
+        {% endif %}
       args:
-        warn: no # Suppress warnings about command module
-      register: upgrade_result
-      changed_when: "'No new release found.' not in upgrade_result.stdout"
-
-    - name: Check if a reboot is required
-      ansible.builtin.stat:
-        path: /var/run/reboot-required
-      register: reboot_required_file
-
-    - name: Reboot the server if required
-      ansible.builtin.reboot:
-      when: reboot_required_file.stat.exists
+        warn: false # Suppress warnings about potential interactive prompts
+      register: upgrade_output
+      changed_when: "'No new release found.' not in upgrade_output.stdout"
+      notify: Check for reboot
 
     - name: Clean up old packages
       ansible.builtin.apt:
         autoremove: yes
-        autoclean: yes
+        purge: yes
+
+  handlers:
+    - name: Check for reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+        get_checksum: no
+      register: reboot_required_file
+      listen: "Check for reboot"
+
+    - name: Reboot the server if required
+      ansible.builtin.reboot:
+      when: reboot_required_file.stat.exists == true
+      listen: "Check for reboot"
