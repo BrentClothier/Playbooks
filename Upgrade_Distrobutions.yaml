@@ -1,6 +1,6 @@
 ---
 - name: Upgrade Ubuntu major version
-  hosts: your_ubuntu_servers # Replace with your target host group
+  hosts: containers # Replace with your target host group
   become: yes # Run tasks with root privileges
   vars:
     # Set to true to automatically answer 'yes' to prompts during the upgrade
