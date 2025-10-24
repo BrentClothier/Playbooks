@@ -1,0 +1,32 @@
+---
+- name: Upgrade Ubuntu distribution
+  hosts: containers # Replace with your inventory group or hostname
+  become: yes # Run tasks with root privileges
+
+  tasks:
+    - name: Ensure update-manager-core is installed
+      ansible.builtin.apt:
+        name: update-manager-core
+        state: present
+        update_cache: yes
+
+    - name: Perform a release upgrade
+      ansible.builtin.command: /usr/bin/do-release-upgrade -f DistUpgradeViewNonInteractive
+      args:
+        warn: no # Suppress warnings about command module
+      register: upgrade_result
+      changed_when: "'No new release found.' not in upgrade_result.stdout"
+
+    - name: Check if a reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
+    - name: Reboot the server if required
+      ansible.builtin.reboot:
+      when: reboot_required_file.stat.exists
+
+    - name: Clean up old packages
+      ansible.builtin.apt:
+        autoremove: yes
+        autoclean: yes
