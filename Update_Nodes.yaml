@@ -13,3 +13,7 @@
       ansible.builtin.apt:
         autoremove: yes
         #test
+    
+    - name: Clean up apt cache
+      ansible.builtin.apt:
+        autoclean: yes

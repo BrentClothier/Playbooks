@@ -1,5 +1,5 @@
 ---
-- hosts: containers
+- hosts: VMs
   gather_facts: yes
   become: yes # Run tasks with sudo privileges
 
