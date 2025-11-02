@@ -29,6 +29,9 @@ all:
           ansible_host: 192.168.86.141
         ansible.home:
           ansible_host: 192.168.86.243
-          
+    VMs:
+      hosts:
+        linux-Mint.home:
+          ansible_host: 192.168.86.45
         
         
