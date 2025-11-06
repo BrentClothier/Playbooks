@@ -7,11 +7,10 @@
     - name: Update apt cache and upgrade all packages
       ansible.builtin.apt:
         update_cache: yes
-        upgrade: yes 
-
+        upgrade: yes
     - name: Check if a reboot is required
       ansible.builtin.stat:
-        path: /var/run/reboot-required
+        path: /var/run/reboot-require
         get_checksum: no
       register: reboot_required_file
 
