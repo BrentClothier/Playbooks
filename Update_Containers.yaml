@@ -3,7 +3,7 @@
   gather_facts: yes
   become: yes # Run tasks with sudo privileges
 
-   tasks:
+  tasks:
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: yes
