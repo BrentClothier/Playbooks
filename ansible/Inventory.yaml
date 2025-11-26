@@ -1,0 +1,38 @@
+---
+all:
+  children:
+    nodes:
+      hosts:
+        proxmox1.home:
+          ansible_host: 192.168.86.68
+        proxmox2.home:
+          ansible_host: 192.168.86.48
+        proxmox3.home:
+          ansible_host: 192.168.86.34
+    containers:
+      hosts:
+        mealie.home:
+          ansible_host: 192.168.86.67
+        audiobookshelf.home:
+          ansible_host: 192.168.86.143
+        paperless.home:
+          ansible_host: 192.168.86.36
+        portainer.home:
+          ansible_host: 192.168.86.43
+        NFS.home:
+          ansible_host: 192.168.86.82
+        nginx.home:
+          ansible_host: 192.168.86.47
+        romm.home:
+          ansible_host: 192.168.86.17
+        servarr.home:
+          ansible_host: 192.168.86.141
+        ansible.home:
+          ansible_host: 192.168.86.243
+    VMs:
+      hosts:
+        Brent-Rig.home:
+          ansible_host: 192.168.86.45
+        homeassistant.home:
+          ansible_host: 192.168.86.113
+        
