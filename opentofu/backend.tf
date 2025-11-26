@@ -8,6 +8,6 @@ terraform {
 
     skip_credentials_validation = true
     skip_region_validation      = true
-    force_path_style            = true
+    use_path_style              = true
   }
 }
