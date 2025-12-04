@@ -1,5 +1,5 @@
 resource "proxmox_lxc" "test_container" {
-  target_node = "proxmox3"
+  target_node = var.pve_node
   hostname    = "test-lxc"
   ostemplate  = "local:vztmpl/ubuntu-25.04-standard_25.04-1.1_amd64.tar.zst"
 
