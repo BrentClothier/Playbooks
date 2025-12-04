@@ -1,3 +1,3 @@
-pm_api_url          = "https://proxmox.clothiernet.duckdns.org:8006/api2/json"
-pm_api_token_id     = "terraform_Svc@pam!APItoken"
-pm_api_token_secret = "ed52c704-d4a7-49b0-9957-aace7545de36"
+pm_api_url          = "https://192.168.86.68:8006/api2/json"
+pm_api_token_id     = "terraform_Svc@pam!tf-full"
+pm_api_token_secret = "e97059c1-16a0-43ae-b0c2-74e3ddd1964b"
