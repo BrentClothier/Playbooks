@@ -3,19 +3,29 @@ resource "proxmox_lxc" "test_container" {
   hostname    = "test-lxc"
   ostemplate  = "local:vztmpl/ubuntu-25.04-standard_25.04-1.1_amd64.tar.zst"
 
-  cores  = 1
-  memory = 512  # MB
+  cores  = 2
+  memory = 2048  # MB
+
+  unprivileged = true
+
+  start = true
+  onboot = true
 
   rootfs {
-    storage = "local"
+    storage = "USB_Storage_Space"
     size    = "4G"
   }
 
   network {
-    name   = "eth0"
-    bridge = "vmbr0"
-    ip     = "dhcp"
-  }
+  name   = "eth0"
+  bridge = "vmbr0"
+  ip     = "192.168.86.160/24"
+  gw     = "192.168.86.1"
+  tag    = 1
+}
 
-  onboot = false
+  features {
+    nesting = true
+  }
+  
 }
