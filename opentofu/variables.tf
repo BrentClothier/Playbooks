@@ -19,3 +19,14 @@ variable "pve_node" {
   description = "Default Proxmox node to deploy containers/VMs on"
   default     = "proxmox3"
 }
+
+variable "ct_root_password" {
+  type        = string
+  description = "Root password for LXC containers"
+  sensitive   = true
+}
+
+variable "ct_ssh_public_keys" {
+  type        = string
+  description = "SSH public keys to add to root's authorized_keys"
+}

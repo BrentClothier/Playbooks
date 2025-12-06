@@ -11,6 +11,9 @@ resource "proxmox_lxc" "test_container" {
   start = true
   onboot = true
 
+  password        = var.ct_root_password
+  ssh_public_keys = var.ct_ssh_public_keys
+
   rootfs {
     storage = "USB_Storage_Space"
     size    = "4G"
