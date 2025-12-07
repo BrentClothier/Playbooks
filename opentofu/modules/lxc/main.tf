@@ -1,0 +1,87 @@
+terraform {
+  required_providers {
+    proxmox = {
+      source = "telmate/proxmox"
+    }
+  }
+}
+
+
+variable "cores" {
+  type        = number
+  description = "Number of CPU cores for this LXC"
+  default     = 2
+}
+
+variable "memory" {
+  type        = number
+  description = "Memory in MB for this LXC"
+  default     = 2048
+}
+
+variable "disk_size" {
+  type        = string
+  description = "Root disk size (e.g., 15G)"
+  default     = "15G"
+}
+
+variable "hostname" {
+  type        = string
+  description = "Hostname of the LXC container"
+}
+
+variable "ip" {
+  type        = string
+  description = "Static IP address with CIDR (e.g. 192.168.86.160/24)"
+}
+
+variable "node" {
+  type        = string
+  description = "Proxmox node to deploy on (e.g. proxmox3)"
+}
+
+variable "ct_root_password" {
+  type        = string
+  description = "Root password for the container"
+  sensitive   = true
+}
+
+variable "ct_ssh_public_keys" {
+  type        = string
+  description = "SSH public keys for root in the container"
+}
+
+resource "proxmox_lxc" "this" {
+  target_node = var.node
+  hostname    = var.hostname
+  ostemplate  = "local:vztmpl/ubuntu-25.04-standard_25.04-1.1_amd64.tar.zst"
+
+  cores  = var.cores
+  memory = var.memory
+
+
+  unprivileged = true
+
+  start  = true
+  onboot = true
+
+  password        = var.ct_root_password
+  ssh_public_keys = var.ct_ssh_public_keys
+
+  rootfs {
+    storage = "USB_Storage_Space"
+    size = var.disk_size
+  }
+
+  network {
+    name   = "eth0"
+    bridge = "vmbr0"
+    ip     = var.ip
+    gw     = "192.168.86.1"
+    tag    = 1
+  }
+
+  features {
+    nesting = true
+  }
+}
