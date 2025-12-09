@@ -6,6 +6,23 @@ terraform {
   }
 }
 
+variable "storage" {
+  type        = string
+  description = "Proxmox storage ID to use for the container rootfs"
+  default     = "USB_Storage_Space"
+}
+
+variable "start" {
+  type        = bool
+  description = "Whether to start the container immediately after creation"
+  default     = true
+}
+
+variable "onboot" {
+  type        = bool
+  description = "Whether the container should start automatically on node boot"
+  default     = true
+}
 
 variable "cores" {
   type        = number
@@ -62,14 +79,14 @@ resource "proxmox_lxc" "this" {
 
   unprivileged = true
 
-  start  = true
-  onboot = true
+  start  = var.start
+  onboot = var.onboot
 
   password        = var.ct_root_password
   ssh_public_keys = var.ct_ssh_public_keys
 
   rootfs {
-    storage = "USB_Storage_Space"
+    storage = var.storage
     size = var.disk_size
   }
 
