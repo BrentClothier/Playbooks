@@ -1,0 +1,24 @@
+---
+- name: Run OpenTofu plan for homelab
+  hosts: localhost
+  connection: local
+
+  vars:
+    tofu_workdir: "{{ playbook_dir }}"  # adjust if your .tf files are in a subfolder
+
+  tasks:
+    - name: Run tofu init
+      command: tofu init
+      args:
+        chdir: "{{ tofu_workdir }}"
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ minio_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ minio_secret_key }}"
+
+    - name: Run tofu plan
+      command: tofu plan
+      args:
+        chdir: "{{ tofu_workdir }}"
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ minio_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ minio_secret_key }}"
