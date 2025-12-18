@@ -1,1 +1,1 @@
-{"Modules":[{"Key":"","Source":"","Dir":"."},{"Key":"test_container","Source":"./modules/lxc","Dir":"modules/lxc"},{"Key":"web01","Source":"./modules/lxc","Dir":"modules/lxc"}]}
+{"Modules":[{"Key":"","Source":"","Dir":"."},{"Key":"homeassistant","Source":"./modules/lxc","Dir":"modules/lxc"},{"Key":"test_container","Source":"./modules/lxc","Dir":"modules/lxc"},{"Key":"web01","Source":"./modules/lxc","Dir":"modules/lxc"}]}

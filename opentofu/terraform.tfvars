@@ -1,5 +1,5 @@
-pm_api_url          = "https://192.168.86.68:8006/api2/json"
-pm_api_token_id     = "root@pam!ttf-proxmox-root"
+#pm_api_url          = "https://192.168.86.68:8006/api2/json"
+#pm_api_token_id     = "root@pam!tf-proxmox-root"
 
 
 ct_root_password = "Runabout1!"
