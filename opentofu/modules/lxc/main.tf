@@ -101,4 +101,19 @@ resource "proxmox_lxc" "this" {
   features {
     nesting = true
   }
+
+  lifecycle {
+  ignore_changes = [
+    ssh_public_keys,
+    rootfs[0].acl,
+    rootfs[0].quota,
+    rootfs[0].replicate,
+    rootfs[0].ro,
+    rootfs[0].shared,
+    network[0].firewall,
+    network[0].mtu,
+    network[0].rate,
+  ]
+}
+
 }
