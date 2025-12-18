@@ -6,6 +6,10 @@ terraform {
   }
 }
 
+locals {
+  ct_ssh_public_keys_str = length(var.ct_ssh_public_keys) > 0 ? join("\n", var.ct_ssh_public_keys) : ""
+}
+
 variable "storage" {
   type        = string
   description = "Proxmox storage ID to use for the container rootfs"
@@ -84,7 +88,7 @@ resource "proxmox_lxc" "this" {
   onboot = var.onboot
 
   password        = var.ct_root_password
-  ssh_public_keys = var.ct_ssh_public_keys
+  ssh_public_keys = local.ct_ssh_public_keys_str
 
   rootfs {
     storage = var.storage
