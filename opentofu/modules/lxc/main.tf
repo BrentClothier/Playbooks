@@ -64,8 +64,9 @@ variable "ct_root_password" {
 }
 
 variable "ct_ssh_public_keys" {
-  type        = string
+  type        = list(string)
   description = "SSH public keys for root in the container"
+  default     = []
 }
 
 resource "proxmox_lxc" "this" {
