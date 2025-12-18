@@ -1,6 +1,6 @@
 pm_api_url          = "https://192.168.86.68:8006/api2/json"
 pm_api_token_id     = "root@pam!ttf-proxmox-root"
-pm_api_token_secret = var.proxmox_root_token_secret  # secret from Semaphore / env
+
 
 ct_root_password = "Runabout1!"
 ct_ssh_public_keys = <<EOF
