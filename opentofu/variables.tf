@@ -30,3 +30,8 @@ variable "ct_ssh_public_keys" {
   type        = string
   description = "SSH public keys to add to root's authorized_keys"
 }
+
+variable "proxmox_root_token_secret" {
+  type = string
+  sensitive = true
+}
