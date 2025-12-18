@@ -77,7 +77,7 @@ resource "proxmox_lxc" "this" {
   memory = var.memory
 
 
-  unprivileged = true
+  unprivileged = false
 
   start  = var.start
   onboot = var.onboot
@@ -116,4 +116,8 @@ resource "proxmox_lxc" "this" {
   ]
 }
 
+}
+
+output "vmid" {
+  value = proxmox_lxc.this.vmid
 }
