@@ -1,4 +1,12 @@
-// Playbooks/opentofu/modules/vm/main.tf
+terraform {
+  required_providers {
+    proxmox = {
+      source  = "telmate/proxmox"
+      version = "3.0.2-rc06"
+    }
+  }
+}
+
 
 variable "hostname" {
   type        = string
