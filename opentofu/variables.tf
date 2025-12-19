@@ -32,3 +32,8 @@ variable "ct_ssh_public_keys" {
   default     = []
 }
 
+variable "storage" {
+  type    = string
+  default = "USB_Storage_Space"
+}
+
