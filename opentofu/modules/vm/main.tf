@@ -63,15 +63,18 @@ resource "proxmox_vm_qemu" "this" {
 
   cores   = var.cores
   memory  = var.memory
-  onboot  = true
+
+  scsihw = "virtio-scsi-pci"
+  start_at_node_boot = true
 
   # --- Primary disk (multi-block syntax ONLY) ---
-  disk {
-    size    = var.disk_size
-    storage = var.storage
-    type    = "scsi"
-    slot    = 0
-  }
+disk {
+  type    = "disk"
+  slot    = "scsi0"
+  storage = var.storage
+  size    = var.disk_size
+}
+
 
   # --- Network interface ---
   network {
