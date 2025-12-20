@@ -9,5 +9,5 @@ module "homeassistant_vm" {
   storage       = var.storage
   net_bridge    = "vmbr0"
 
-  template_vmid = "114"
+  template_vmid = "ubuntu-2404-cloud-template"
 }
