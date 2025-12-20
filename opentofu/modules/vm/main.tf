@@ -61,7 +61,10 @@ resource "proxmox_vm_qemu" "this" {
   full_clone  = true
 
 
-  cores   = var.cores
+  cpu {
+    cores = var.cores
+  }
+  
   memory  = var.memory
 
   scsihw = "virtio-scsi-pci"
