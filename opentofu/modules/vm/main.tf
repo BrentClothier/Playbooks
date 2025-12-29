@@ -78,6 +78,11 @@ disk {
   size    = var.disk_size
 }
 
+disk {
+  type    = "cloudinit"
+  slot    = "ide2"
+  storage = var.storage
+}
 
   # --- Network interface ---
   network {
@@ -87,7 +92,7 @@ disk {
   }
 
   ipconfig0 = "ip=dhcp"
-  
+
 }
 
 output "vmid" {
