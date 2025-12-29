@@ -85,6 +85,9 @@ disk {
     bridge = var.net_bridge
     id     = 0
   }
+
+  ipconfig0 = "ip=dhcp"
+  
 }
 
 output "vmid" {
