@@ -83,7 +83,8 @@ resource "proxmox_vm_qemu" "this" {
   name        = var.hostname
   target_node = var.node
 
-  clone      = tostring(var.template_vmid)
+  clone_id = tonumber(var.template_vmid)
+
   full_clone = true
 
   cpu {
