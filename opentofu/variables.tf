@@ -36,4 +36,9 @@ variable "storage" {
   type    = string
   default = "USB_Storage_Space"
 }
+variable "pm_root_password" {
+  type      = string
+  sensitive = true
+  description = "root@pam password (required for USB passthrough changes)"
+}
 

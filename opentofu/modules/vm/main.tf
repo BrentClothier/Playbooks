@@ -83,19 +83,14 @@ resource "proxmox_vm_qemu" "this" {
   name        = var.hostname
   target_node = var.node
 
-  clone_id = tonumber(var.template_vmid)
-
+  clone      = tostring(var.template_vmid)   # <-- use clone
   full_clone = true
 
-  cpu {
-    cores = var.cores
-  }
-
+  cpu { cores = var.cores }
   memory             = var.memory
   scsihw             = "virtio-scsi-pci"
   start_at_node_boot = true
 
-  # Primary disk
   disk {
     type    = "disk"
     slot    = "scsi0"
@@ -103,7 +98,6 @@ resource "proxmox_vm_qemu" "this" {
     size    = var.disk_size
   }
 
-  # Cloud-init drive
   disk {
     type    = "cloudinit"
     slot    = "ide2"
@@ -115,30 +109,21 @@ resource "proxmox_vm_qemu" "this" {
     bridge = var.net_bridge
     id     = 0
   }
+
   dynamic "usb" {
-  for_each = local.usb_host != "" ? [1] : []
-  content {
-    id   = 0
-    usb3 = true
-    # Use the correct field name depending on what your provider expects:
-    host = local.usb_host
+    for_each = var.usb_host != "" ? [1] : []   # <-- check the var
+    content {
+      id   = 0
+      usb3 = true
+      host = var.usb_host                      # <-- just use the var
+    }
   }
-}
 
-
-
-
-
-
-
-
-  ipconfig0 = var.ipconfig0
-  sshkeys   = local.sshkeys_str
+  ipconfig0              = var.ipconfig0
+  sshkeys                = local.sshkeys_str
   define_connection_info = false
-
-
-
 }
+
 
 output "vmid" {
   value = proxmox_vm_qemu.this.vmid

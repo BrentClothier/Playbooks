@@ -1,6 +1,11 @@
 module "homeassistant_vm" {
   source = "./modules/vm"
 
+  
+  providers = {
+    proxmox = proxmox.root
+  }
+
   hostname   = "ha-vm01"
   node       = "proxmox2"
   cores      = 2
