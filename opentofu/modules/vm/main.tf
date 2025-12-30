@@ -76,7 +76,7 @@ variable "template_vmid" {
 
 locals {
   sshkeys_str = length(var.ssh_public_keys) > 0 ? join("\n", var.ssh_public_keys) : null
-  usb_host  = local.usb_host != "" ? local.usb_host : null
+  usb_host  = var.usb_host != "" ? var.usb_host : null
 }
 
 resource "proxmox_vm_qemu" "this" {
@@ -115,7 +115,7 @@ resource "proxmox_vm_qemu" "this" {
     id     = 0
   }
   dynamic "usb" {
-  for_each = var.usb_host != "" ? [1] : []
+  for_each = local.usb_host != "" ? [1] : []
   content {
     id   = 0
     usb3 = true
