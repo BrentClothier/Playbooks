@@ -10,4 +10,9 @@ module "homeassistant_vm" {
   net_bridge    = "vmbr0"
 
   template_vmid = "ubuntu-2404-cloud-template"
+
+  ssh_public_keys = var.ct_ssh_public_keys
+
+  ipconfig0 = "ip=192.168.86.170/24,gw=192.168.86.1"
+
 }

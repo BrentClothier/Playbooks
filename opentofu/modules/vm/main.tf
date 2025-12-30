@@ -6,7 +6,14 @@ terraform {
     }
   }
 }
-
+variable "ipconfig0" {
+  type    = string
+  default = ""
+}
+variable "ssh_public_keys" {
+  type    = list(string)
+  default = []
+}
 
 variable "hostname" {
   type        = string
@@ -91,7 +98,9 @@ disk {
     id     = 0
   }
 
-  ipconfig0 = "ip=dhcp"
+  ipconfig0 = var.ipconfig0
+
+  sshkeys = join("\n", var.ssh_public_keys)
 
 }
 
