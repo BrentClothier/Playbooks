@@ -133,6 +133,8 @@ resource "proxmox_vm_qemu" "this" {
 
   ipconfig0 = var.ipconfig0
   sshkeys   = local.sshkeys_str
+  define_connection_info = false
+
 
 
 }
