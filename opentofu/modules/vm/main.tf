@@ -7,11 +7,12 @@ terraform {
   }
 }
 
-variable "usb0" {
+variable "usb_host" {
   type        = string
-  description = "Optional USB passthrough (e.g. host=1-7 or host=10c4:ea60)"
+  description = "Optional USB passthrough host (e.g. 1-7 or 10c4:ea60)"
   default     = ""
 }
+
 
 # Make DHCP the safe default
 variable "ipconfig0" {
@@ -75,7 +76,7 @@ variable "template_vmid" {
 
 locals {
   sshkeys_str = length(var.ssh_public_keys) > 0 ? join("\n", var.ssh_public_keys) : null
-  usb0_str    = var.usb0 != "" ? var.usb0 : null
+  usb_host  = local.usb_host != "" ? local.usb_host : null
 }
 
 resource "proxmox_vm_qemu" "this" {
@@ -113,11 +114,27 @@ resource "proxmox_vm_qemu" "this" {
     bridge = var.net_bridge
     id     = 0
   }
+  dynamic "usb" {
+  for_each = var.usb_host != "" ? [1] : []
+  content {
+    id   = 0
+    usb3 = true
+    # Use the correct field name depending on what your provider expects:
+    host = local.usb_host
+  }
+}
+
+
+
+
+
+
+
 
   ipconfig0 = var.ipconfig0
   sshkeys   = local.sshkeys_str
 
-  usb0 = local.usb0_str
+
 }
 
 output "vmid" {

@@ -2,7 +2,7 @@ module "homeassistant_vm" {
   source = "./modules/vm"
 
   hostname   = "ha-vm01"
-  node       = var.pve_node
+  node       = "proxmox2"
   cores      = 2
   memory     = 4096
   disk_size  = "32G"
@@ -17,5 +17,6 @@ module "homeassistant_vm" {
 
   ipconfig0 = "ip=192.168.86.170/24,gw=192.168.86.1"
 
-  usb0 = "host=1-7"
+  usb_host = "1-7"
+
 }
