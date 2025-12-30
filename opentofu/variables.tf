@@ -26,7 +26,7 @@ variable "ct_root_password" {
   sensitive   = true
 }
 
-variable "ct_ssh_public_keys" {
+variable "ssh_public_keys" {
   type        = list(string)
   description = "SSH public keys to add to root's authorized_keys"
   default     = []

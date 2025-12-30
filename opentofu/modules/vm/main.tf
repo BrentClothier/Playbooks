@@ -6,13 +6,24 @@ terraform {
     }
   }
 }
-variable "ipconfig0" {
-  type    = string
-  default = ""
+
+variable "usb0" {
+  type        = string
+  description = "Optional USB passthrough (e.g. host=1-7 or host=10c4:ea60)"
+  default     = ""
 }
+
+# Make DHCP the safe default
+variable "ipconfig0" {
+  type        = string
+  description = "cloud-init network config (e.g. ip=dhcp OR ip=192.168.86.170/24,gw=192.168.86.1)"
+  default     = "ip=dhcp"
+}
+
 variable "ssh_public_keys" {
-  type    = list(string)
-  default = []
+  type        = list(string)
+  description = "SSH public keys to inject via cloud-init"
+  default     = []
 }
 
 variable "hostname" {
@@ -56,42 +67,47 @@ variable "net_bridge" {
   default     = "vmbr0"
 }
 
+# Prefer number for VMID
 variable "template_vmid" {
-  type        = string
+  type        = number
   description = "Proxmox VM template VMID to clone from (e.g. 114)"
+}
+
+locals {
+  sshkeys_str = length(var.ssh_public_keys) > 0 ? join("\n", var.ssh_public_keys) : null
+  usb0_str    = var.usb0 != "" ? var.usb0 : null
 }
 
 resource "proxmox_vm_qemu" "this" {
   name        = var.hostname
   target_node = var.node
-  clone       = var.template_vmid
-  full_clone  = true
 
+  clone      = tostring(var.template_vmid)
+  full_clone = true
 
   cpu {
     cores = var.cores
   }
-  
-  memory  = var.memory
 
-  scsihw = "virtio-scsi-pci"
+  memory             = var.memory
+  scsihw             = "virtio-scsi-pci"
   start_at_node_boot = true
 
-  # --- Primary disk (multi-block syntax ONLY) ---
-disk {
-  type    = "disk"
-  slot    = "scsi0"
-  storage = var.storage
-  size    = var.disk_size
-}
+  # Primary disk
+  disk {
+    type    = "disk"
+    slot    = "scsi0"
+    storage = var.storage
+    size    = var.disk_size
+  }
 
-disk {
-  type    = "cloudinit"
-  slot    = "ide2"
-  storage = var.storage
-}
+  # Cloud-init drive
+  disk {
+    type    = "cloudinit"
+    slot    = "ide2"
+    storage = var.storage
+  }
 
-  # --- Network interface ---
   network {
     model  = "virtio"
     bridge = var.net_bridge
@@ -99,9 +115,9 @@ disk {
   }
 
   ipconfig0 = var.ipconfig0
+  sshkeys   = local.sshkeys_str
 
-  sshkeys = join("\n", var.ssh_public_keys)
-
+  usb0 = local.usb0_str
 }
 
 output "vmid" {
