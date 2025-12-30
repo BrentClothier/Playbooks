@@ -17,7 +17,7 @@ variable "pm_api_token_secret" {
 variable "pve_node" {
   type        = string
   description = "Default Proxmox node to deploy containers/VMs on"
-  default     = "proxmox3"
+  default     = "proxmox2"
 }
 
 variable "ct_root_password" {
