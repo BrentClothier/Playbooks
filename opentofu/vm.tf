@@ -24,4 +24,7 @@ module "homeassistant_vm" {
 
   usb_host = "1-7"
 
+  template_name = "ubuntu-2404-cloud-template"
+
+
 }

@@ -6,6 +6,10 @@ terraform {
     }
   }
 }
+variable "template_name" {
+  type        = string
+  description = "Proxmox template name to clone from"
+}
 
 variable "usb_host" {
   type        = string
@@ -83,7 +87,7 @@ resource "proxmox_vm_qemu" "this" {
   name        = var.hostname
   target_node = var.node
 
-  clone      = tostring(var.template_vmid)   # <-- use clone
+  clone = var.template_name
   full_clone = true
 
   cpu { cores = var.cores }
