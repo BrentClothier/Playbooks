@@ -22,7 +22,4 @@ provider "proxmox" {
   pm_password     = var.pm_root_password
   pm_tls_insecure = true
 }
-variable "pm_root_password" {
-  type      = string
-  sensitive = true
-}
+

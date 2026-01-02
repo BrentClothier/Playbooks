@@ -114,14 +114,14 @@ resource "proxmox_vm_qemu" "this" {
     id     = 0
   }
 
-  dynamic "usb" {
-    for_each = var.usb_host != "" ? [1] : []   # <-- check the var
-    content {
-      id   = 0
-      usb3 = true
-      host = var.usb_host                      # <-- just use the var
-    }
-  }
+  #dynamic "usb" {
+  #  for_each = var.usb_host != "" ? [1] : []   # <-- check the var
+  #  content {
+  #    id   = 0
+  #    usb3 = true
+ #     host = var.usb_host                      # <-- just use the var
+ #   }
+ # }
 
   ipconfig0              = var.ipconfig0
   sshkeys                = local.sshkeys_str
