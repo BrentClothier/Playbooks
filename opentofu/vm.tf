@@ -15,7 +15,7 @@ module "homeassistant_vm" {
   net_bridge = "vmbr0"
 
   # VMID of the template (you said it's 114)
-  template_vmid = 114
+  template_vmid = 115
 
   # must be list(string)
   ssh_public_keys = var.ssh_public_keys
