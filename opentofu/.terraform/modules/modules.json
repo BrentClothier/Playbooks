@@ -1,1 +1,1 @@
-{"Modules":[{"Key":"","Source":"","Dir":"."},{"Key":"homeassistant","Source":"./modules/lxc","Dir":"modules/lxc"},{"Key":"test_container","Source":"./modules/lxc","Dir":"modules/lxc"},{"Key":"web01","Source":"./modules/lxc","Dir":"modules/lxc"}]}
+{"Modules":[{"Key":"","Source":"","Dir":"."},{"Key":"homeassistant","Source":"./modules/lxc","Dir":"modules/lxc"},{"Key":"homeassistant_vm","Source":"./modules/vm","Dir":"modules/vm"},{"Key":"test_container","Source":"./modules/lxc","Dir":"modules/lxc"},{"Key":"web01","Source":"./modules/lxc","Dir":"modules/lxc"}]}

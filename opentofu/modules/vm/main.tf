@@ -82,6 +82,10 @@ locals {
   sshkeys_str = length(var.ssh_public_keys) > 0 ? join("\n", var.ssh_public_keys) : null
   usb_host  = var.usb_host != "" ? var.usb_host : null
 }
+variable "vmid" {
+  type        = number
+  description = "VMID for the VM"
+}
 
 resource "proxmox_vm_qemu" "this" {
   name        = var.hostname
@@ -126,6 +130,8 @@ resource "proxmox_vm_qemu" "this" {
   ipconfig0              = var.ipconfig0
   sshkeys                = local.sshkeys_str
   define_connection_info = false
+  vmid = var.vmid
+
 }
 
 

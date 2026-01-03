@@ -16,6 +16,7 @@ module "homeassistant_vm" {
 
   # VMID of the template (you said it's 114)
   template_vmid = 115
+  vmid = 116
 
   # must be list(string)
   ssh_public_keys = var.ssh_public_keys
