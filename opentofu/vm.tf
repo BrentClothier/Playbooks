@@ -8,7 +8,7 @@ template_name = var.template_name
   node       = var.pve_node
   storage    = var.storage
 
-  # inject keys
+  # inject keys#
   ssh_public_keys = var.ct_ssh_public_keys
 
   # static IP via cloud-init
