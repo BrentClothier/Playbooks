@@ -3,17 +3,23 @@ module "homeassistant_vm" {
 
 template_name = var.template_name
 
+hostname = "ha-vm01"
+node     = var.pve_node
+storage  = var.storage
 
-  hostname   = "ha-vm01"
-  node       = var.pve_node
-  storage    = var.storage
+cores     = 2
+memory    = 4096
+disk_size = "32G"
 
-  # inject keys#
-  ssh_public_keys = var.ct_ssh_public_keys
+net_bridge = "vmbr0"
 
-  # static IP via cloud-init
-  ipconfig0 = "ip=192.168.86.170/24,gw=192.168.86.1"
+  # IMPORTANT:
+  # If your LAN is untagged, set this to 0.
+  # If you truly need VLAN 1 tagging, set to 1.
+vlan_tag = 0
 
-  # if you want to force an ID:
-  vmid = var.vmid
+ssh_public_keys = var.ct_ssh_public_keys
+ipconfig0       = "ip=192.168.86.170/24,gw=192.168.86.1"
+
+vmid = var.vmid
 }
