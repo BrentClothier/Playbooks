@@ -14,6 +14,8 @@ provider "proxmox" {
 
   pm_tls_insecure     = true
 }
+
+/*
 # Root provider = root@pam password (needed for USB passthrough)
 provider "proxmox" {
   alias           = "root"
@@ -22,4 +24,4 @@ provider "proxmox" {
   pm_password     = var.pm_root_password
   pm_tls_insecure = true
 }
-
+*/

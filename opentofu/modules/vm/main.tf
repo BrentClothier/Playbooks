@@ -6,135 +6,52 @@ terraform {
     }
   }
 }
+
+variable "hostname" { type = string }
+variable "node"     { type = string }
+variable "storage"  { type = string }
+
 variable "template_name" {
   type        = string
-  description = "Proxmox template name to clone from"
+  description = "Template NAME to clone from"
 }
 
-variable "usb_host" {
-  type        = string
-  description = "Optional USB passthrough host (e.g. 1-7 or 10c4:ea60)"
-  default     = ""
-}
-
-
-# Make DHCP the safe default
 variable "ipconfig0" {
   type        = string
-  description = "cloud-init network config (e.g. ip=dhcp OR ip=192.168.86.170/24,gw=192.168.86.1)"
   default     = "ip=dhcp"
 }
 
 variable "ssh_public_keys" {
-  type        = list(string)
-  description = "SSH public keys to inject via cloud-init"
-  default     = []
+  type    = list(string)
+  default = []
 }
 
-variable "hostname" {
-  type        = string
-  description = "VM hostname"
-}
-
-variable "node" {
-  type        = string
-  description = "Proxmox node to deploy on"
-  default     = "proxmox3"
-}
-
-variable "cores" {
-  type        = number
-  description = "Number of CPU cores"
-  default     = 2
-}
-
-variable "memory" {
-  type        = number
-  description = "Memory in MB"
-  default     = 4096
-}
-
-variable "disk_size" {
-  type        = string
-  description = "Primary disk size"
-  default     = "32G"
-}
-
-variable "storage" {
-  type        = string
-  description = "Proxmox storage ID"
-  default     = "USB_Storage_Space"
-}
-
-variable "net_bridge" {
-  type        = string
-  description = "Proxmox bridge"
-  default     = "vmbr0"
-}
-
-# Prefer number for VMID
-variable "template_vmid" {
-  type        = number
-  description = "Proxmox VM template VMID to clone from (e.g. 114)"
+variable "vmid" {
+  type    = number
+  default = 0
 }
 
 locals {
   sshkeys_str = length(var.ssh_public_keys) > 0 ? join("\n", var.ssh_public_keys) : null
-  usb_host  = var.usb_host != "" ? var.usb_host : null
-}
-variable "vmid" {
-  type        = number
-  description = "VMID for the VM"
 }
 
 resource "proxmox_vm_qemu" "this" {
   name        = var.hostname
   target_node = var.node
 
-  clone = var.template_name
+  # IMPORTANT: clone expects NAME here
+  clone      = var.template_name
   full_clone = true
 
-  cpu { cores = var.cores }
-  memory             = var.memory
-  scsihw             = "virtio-scsi-pci"
-  start_at_node_boot = true
-
-  disk {
-    type    = "disk"
-    slot    = "scsi0"
-    storage = var.storage
-    size    = var.disk_size
-  }
-
-  disk {
-    type    = "cloudinit"
-    slot    = "ide2"
-    storage = var.storage
-  }
-
-  network {
-    model  = "virtio"
-    bridge = var.net_bridge
-    id     = 0
-  }
-
-  #dynamic "usb" {
-  #  for_each = var.usb_host != "" ? [1] : []   # <-- check the var
-  #  content {
-  #    id   = 0
-  #    usb3 = true
- #     host = var.usb_host                      # <-- just use the var
- #   }
- # }
-
-  ipconfig0              = var.ipconfig0
-  sshkeys                = local.sshkeys_str
+  # don’t let the provider try SSH during plan/apply
   define_connection_info = false
-  vmid = var.vmid
 
-}
+  # only set vmid if you provided one
+  vmid = var.vmid != 0 ? var.vmid : null
 
+  # cloud-init config
+  ipconfig0 = var.ipconfig0
+  sshkeys   = local.sshkeys_str
 
-output "vmid" {
-  value = proxmox_vm_qemu.this.vmid
+  # (keep the rest of your existing disk/network blocks here)
 }

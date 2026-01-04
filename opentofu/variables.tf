@@ -5,7 +5,7 @@ variable "pm_api_url" {
 
 variable "pm_api_token_id" {
   type        = string
-  description = "Proxmox API token ID"
+  description = "Proxmox API token ID (e.g. terraform_Svc@pam!tf-full OR root@pam!tf-root)"
 }
 
 variable "pm_api_token_secret" {
@@ -14,31 +14,40 @@ variable "pm_api_token_secret" {
   sensitive   = true
 }
 
+# where to deploy
 variable "pve_node" {
   type        = string
-  description = "Default Proxmox node to deploy containers/VMs on"
+  description = "Default Proxmox node to deploy on"
   default     = "proxmox2"
 }
 
-variable "ct_root_password" {
+variable "storage" {
   type        = string
-  description = "Root password for LXC containers"
-  sensitive   = true
+  description = "Proxmox storage ID"
+  default     = "USB_Storage_Space"
 }
 
-variable "ssh_public_keys" {
+# keep your existing Semaphore env var name
+variable "ct_ssh_public_keys" {
   type        = list(string)
-  description = "SSH public keys to add to root's authorized_keys"
+  description = "SSH public keys to inject"
   default     = []
 }
 
-variable "storage" {
-  type    = string
-  default = "USB_Storage_Space"
-}
-variable "pm_root_password" {
-  type      = string
-  sensitive = true
-  description = "root@pam password (required for USB passthrough changes)"
+# IMPORTANT: clone by NAME, not VMID
+variable "template_name" {
+  type        = string
+  description = "Proxmox VM template NAME to clone from (qm config <id> shows name: ...)"
 }
 
+# optional: let you pin a VMID so it recreates predictably
+variable "vmid" {
+  type        = number
+  description = "Optional VMID to force (e.g. 116). Leave 0 to auto-assign."
+  default     = 0
+}
+variable "template_name" {
+  type        = string
+  description = "Proxmox VM template name to clone (must match `qm config <id> | grep '^name:'`)"
+  default     = "ubuntu-2504-cloud-uefi"
+}

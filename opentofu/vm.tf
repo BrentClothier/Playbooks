@@ -1,31 +1,19 @@
 module "homeassistant_vm" {
   source = "./modules/vm"
 
-  
-  providers = {
-    proxmox = proxmox.root
-  }
+template_name = var.template_name
+
 
   hostname   = "ha-vm01"
-  node       = "proxmox2"
-  cores      = 2
-  memory     = 4096
-  disk_size  = "32G"
+  node       = var.pve_node
   storage    = var.storage
-  net_bridge = "vmbr0"
 
-  # VMID of the template (you said it's 114)
-  template_vmid = 115
-  vmid = 116
+  # inject keys
+  ssh_public_keys = var.ct_ssh_public_keys
 
-  # must be list(string)
-  ssh_public_keys = var.ssh_public_keys
-
+  # static IP via cloud-init
   ipconfig0 = "ip=192.168.86.170/24,gw=192.168.86.1"
 
-  usb_host = "1-7"
-
-  template_name = "ubuntu-2404-cloud-template"
-
-
+  # if you want to force an ID:
+  vmid = var.vmid
 }
