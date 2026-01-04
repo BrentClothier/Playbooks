@@ -34,12 +34,6 @@ variable "ct_ssh_public_keys" {
   default     = []
 }
 
-# IMPORTANT: clone by NAME, not VMID
-variable "template_name" {
-  type        = string
-  description = "Proxmox VM template NAME to clone from (qm config <id> shows name: ...)"
-}
-
 # optional: let you pin a VMID so it recreates predictably
 variable "vmid" {
   type        = number
