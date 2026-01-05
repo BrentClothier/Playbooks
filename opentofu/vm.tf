@@ -18,7 +18,7 @@ net_bridge = "vmbr0"
   # If you truly need VLAN 1 tagging, set to 1.
 vlan_tag = 0
 
-ssh_public_keys = var.ct_ssh_public_keys
+ssh_public_keys = var.ssh_public_keys
 ciuser = "root"
 ipconfig0       = "ip=192.168.86.170/24,gw=192.168.86.1"
 

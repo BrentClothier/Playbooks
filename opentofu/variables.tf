@@ -28,7 +28,7 @@ variable "storage" {
 }
 
 # keep your existing Semaphore env var name
-variable "ct_ssh_public_keys" {
+variable "ssh_public_keys" {
   type        = list(string)
   description = "SSH public keys to inject"
   default     = []
