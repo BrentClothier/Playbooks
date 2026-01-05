@@ -6,6 +6,12 @@ terraform {
     }
   }
 }
+variable "ciuser" {
+  type        = string
+  description = "cloud-init username"
+  default     = "ubuntu"
+}
+
 variable "cores" {
   type    = number
   default = 2
@@ -111,6 +117,8 @@ resource "proxmox_vm_qemu" "this" {
   # cloud-init config
   ipconfig0 = var.ipconfig0
   sshkeys   = local.sshkeys_str
+  ciuser = var.ciuser
+
 }
 
 
