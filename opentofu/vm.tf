@@ -24,3 +24,4 @@ ipconfig0       = "ip=192.168.86.170/24,gw=192.168.86.1"
 
 vmid = var.vmid
 }
+sadfd
