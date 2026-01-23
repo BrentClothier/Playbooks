@@ -43,5 +43,5 @@ variable "vmid" {
 variable "template_name" {
   type        = string
   description = "Proxmox VM template name to clone (must match `qm config <id> | grep '^name:'`)"
-  default     = "ubuntu-2504-cloud-uefi"
+  default     = "ubuntu-2504-cloud-uefi-prep"
 }
