@@ -1,0 +1,29 @@
+- name: Build dynamic inventory from OpenTofu outputs
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Read OpenTofu outputs (JSON)
+      command: tofu -chdir=opentofu output -json
+      register: tf_out
+      changed_when: false
+
+    - name: Parse outputs
+      set_fact:
+        tf: "{{ tf_out.stdout | from_json }}"
+
+    - name: Add hosts from OpenTofu output
+      add_host:
+        name: "{{ item.key }}"
+        ansible_host: "{{ item.value.host }}"
+        ansible_user: "{{ item.value.user | default('root') }}"
+        ansible_port: "{{ item.value.port | default(22) }}"
+        groups: tofu_hosts
+      loop: "{{ tf.ansible_hosts.value | dict2items }}"
+
+- name: Configure provisioned hosts
+  hosts: tofu_hosts
+  become: true
+  tasks:
+    - name: Quick connectivity check
+      ping
+
