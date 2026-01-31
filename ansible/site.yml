@@ -2,9 +2,21 @@
 - name: Build dynamic inventory from OpenTofu outputs
   hosts: localhost
   gather_facts: false
+  vars:
+    tofu_dir: "{{ playbook_dir }}/../opentofu"
   tasks:
+    - name: Ensure OpenTofu directory exists
+      stat:
+        path: "{{ tofu_dir }}"
+      register: tofu_dir_stat
+
+    - name: Fail if OpenTofu dir not found
+      fail:
+        msg: "OpenTofu directory not found at {{ tofu_dir }}. Update tofu_dir to match your repo structure."
+      when: not tofu_dir_stat.stat.exists
+
     - name: Read OpenTofu outputs (JSON)
-      command: tofu -chdir=opentofu output -json
+      command: tofu -chdir={{ tofu_dir }} output -json
       register: tf_out
       changed_when: false
 
