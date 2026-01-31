@@ -1,3 +1,4 @@
+---
 - name: Build dynamic inventory from OpenTofu outputs
   hosts: localhost
   gather_facts: false
@@ -17,14 +18,13 @@
         ansible_host: "{{ item.value.host }}"
         ansible_user: "{{ item.value.user | default('root') }}"
         ansible_port: "{{ item.value.port | default(22) }}"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
         groups: tofu_hosts
-      loop: "{{ (tf.ansible_hosts.value | default({})) | dict2items }}"
+      loop: "{{ tf.ansible_hosts.value | dict2items }}"
 
 - name: Configure provisioned hosts
   hosts: tofu_hosts
-  become: true
   gather_facts: false
+  become: true
   tasks:
     - name: Quick connectivity check
-      ping
+      ansible.builtin.ping:
