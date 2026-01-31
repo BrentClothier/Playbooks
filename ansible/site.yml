@@ -1,4 +1,3 @@
----
 - name: Build dynamic inventory from OpenTofu outputs
   hosts: localhost
   gather_facts: false
@@ -14,6 +13,11 @@
       fail:
         msg: "OpenTofu directory not found at {{ tofu_dir }}. Update tofu_dir to match your repo structure."
       when: not tofu_dir_stat.stat.exists
+
+    - name: OpenTofu init (download providers for this job workspace)
+      command: tofu -chdir={{ tofu_dir }} init -input=false -no-color
+      register: tofu_init
+      changed_when: false
 
     - name: Read OpenTofu outputs (JSON)
       command: tofu -chdir={{ tofu_dir }} output -json
