@@ -42,5 +42,4 @@
   gather_facts: false
   become: true
   tasks:
-    - name: Quick connectivity check
-      ansible.builtin.ping:
+    - import_playbook: stacks/ha_bootstrap.yml
