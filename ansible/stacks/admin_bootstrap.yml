@@ -1,0 +1,113 @@
+---
+- name: Bootstrap admin VM for Portainer-managed stacks
+  hosts: tofu_hosts
+  become: true
+  gather_facts: true
+
+  vars:
+    portainer_agent_image: "portainer/agent:2.33.2"
+    portainer_agent_port: 9001
+
+    nfs_server: "192.168.86.82"
+    nfs_export: "/data"
+    nfs_mount_base: "/mnt/data"
+
+    authentik_root: "/mnt/data/apps/auth/authentik"
+
+  tasks:
+    - name: Install base packages
+      ansible.builtin.apt:
+        update_cache: true
+        name:
+          - nfs-common
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - qemu-guest-agent
+          - jq
+        state: present
+
+    - name: Enable qemu guest agent
+      ansible.builtin.service:
+        name: qemu-guest-agent
+        enabled: true
+        state: started
+
+    - name: Create Docker keyring dir
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Add Docker GPG key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.gpg
+        mode: "0644"
+        force: true
+
+    - name: Add Docker apt repo
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ ansible_architecture }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        filename: docker
+        state: present
+
+    - name: Install Docker engine and compose plugin
+      ansible.builtin.apt:
+        update_cache: true
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+    - name: Ensure Docker is enabled and running
+      ansible.builtin.service:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Create NFS mount base
+      ansible.builtin.file:
+        path: "{{ nfs_mount_base }}"
+        state: directory
+        mode: "0755"
+
+    - name: Mount NFS export
+      ansible.posix.mount:
+        src: "{{ nfs_server }}:{{ nfs_export }}"
+        path: "{{ nfs_mount_base }}"
+        fstype: nfs
+        opts: "rw,nfsvers=4"
+        state: mounted
+
+    - name: Create Authentik directory structure
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ authentik_root }}"
+        - "{{ authentik_root }}/config"
+        - "{{ authentik_root }}/config/blueprints"
+        - "{{ authentik_root }}/config/custom-templates"
+        - "{{ authentik_root }}/data"
+        - "{{ authentik_root }}/data/media"
+        - "{{ authentik_root }}/logs"
+        - "{{ authentik_root }}/backups"
+        - "{{ authentik_root }}/backups/postgres"
+
+    - name: Run Portainer Agent container
+      community.docker.docker_container:
+        name: portainer_agent
+        image: "{{ portainer_agent_image }}"
+        restart_policy: always
+        published_ports:
+          - "{{ portainer_agent_port }}:9001"
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+          - /var/lib/docker/volumes:/var/lib/docker/volumes
+        state: started
