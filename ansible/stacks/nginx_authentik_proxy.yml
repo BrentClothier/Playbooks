@@ -1,0 +1,41 @@
+---
+- name: Configure nginx reverse proxy for Authentik
+  hosts: nginx.home
+  become: true
+  gather_facts: true
+
+  vars:
+    authentik_fqdn: "auth.clothiernet.duckdns.org"
+    authentik_upstream_host: "192.168.86.171"
+    authentik_upstream_port: 9000
+
+    tls_fullchain_path: "/etc/letsencrypt/live/auth.clothiernet.duckdns.org/fullchain.pem"
+    tls_privkey_path: "/etc/letsencrypt/live/auth.clothiernet.duckdns.org/privkey.pem"
+
+  tasks:
+    - name: Install nginx
+      ansible.builtin.apt:
+        name: nginx
+        update_cache: true
+        state: present
+
+    - name: Install Authentik site config
+      ansible.builtin.template:
+        src: templates/auth.clothiernet.duckdns.org.conf.j2
+        dest: /etc/nginx/sites-available/auth.clothiernet.duckdns.org.conf
+        mode: "0644"
+
+    - name: Enable Authentik site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/auth.clothiernet.duckdns.org.conf
+        dest: /etc/nginx/sites-enabled/auth.clothiernet.duckdns.org.conf
+        state: link
+
+    - name: Test nginx config
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
