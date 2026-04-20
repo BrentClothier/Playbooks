@@ -1,0 +1,12 @@
+---
+- name: Redeploy Authentik stack in Portainer
+  hosts: localhost
+  gather_facts: false
+  vars:
+    portainer_authentik_webhook_url: "{{ lookup('env', 'PORTAINER_AUTHENTIK_WEBHOOK_URL') }}"
+  tasks:
+    - name: Trigger Portainer webhook
+      ansible.builtin.uri:
+        url: "{{ portainer_authentik_webhook_url }}"
+        method: POST
+        status_code: 204
