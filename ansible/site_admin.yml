@@ -1,0 +1,39 @@
+---
+- name: Build dynamic inventory from OpenTofu outputs
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tofu_dir: "{{ playbook_dir }}/../opentofu"
+  tasks:
+    - name: Ensure OpenTofu directory exists
+      ansible.builtin.stat:
+        path: "{{ tofu_dir }}"
+      register: tofu_dir_stat
+
+    - name: Fail if OpenTofu dir not found
+      ansible.builtin.fail:
+        msg: "OpenTofu directory not found at {{ tofu_dir }}."
+      when: not tofu_dir_stat.stat.exists
+
+    - name: OpenTofu init
+      ansible.builtin.command: tofu -chdir={{ tofu_dir }} init -input=false -no-color
+      changed_when: false
+
+    - name: Read OpenTofu outputs
+      ansible.builtin.command: tofu -chdir={{ tofu_dir }} output -json
+      register: tf_out
+      changed_when: false
+
+    - name: Parse outputs
+      ansible.builtin.set_fact:
+        tf: "{{ tf_out.stdout | from_json }}"
+
+    - name: Add admin host from OpenTofu output
+      ansible.builtin.add_host:
+        name: admin
+        ansible_host: "{{ tf.admin_ansible_host.value.host }}"
+        ansible_user: "{{ tf.admin_ansible_host.value.user | default('root') }}"
+        ansible_port: "{{ tf.admin_ansible_host.value.port | default(22) }}"
+        groups: tofu_hosts
+
+- import_playbook: stacks/admin_bootstrap.yml
