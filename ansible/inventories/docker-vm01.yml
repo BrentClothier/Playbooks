@@ -1,0 +1,8 @@
+---
+all:
+  children:
+    docker_hosts:
+      hosts:
+        docker-vm01.home:
+          ansible_host: 192.168.86.172
+          ansible_user: root
