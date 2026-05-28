@@ -1,0 +1,56 @@
+---
+- name: Provision docker-vm01 with OpenTofu from Semaphore
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    tofu_dir: "{{ playbook_dir }}/../opentofu"
+    docker_vm_name: "docker-vm01.home"
+    docker_vm_host: "192.168.86.172"
+    docker_vm_user: "root"
+
+    tofu_env:
+      AWS_ACCESS_KEY_ID: "{{ minio_access_key }}"
+      AWS_SECRET_ACCESS_KEY: "{{ minio_secret_key }}"
+      TF_VAR_pm_api_url: "{{ pm_api_url }}"
+      TF_VAR_pm_api_token_id: "{{ pm_api_token_id }}"
+      TF_VAR_pm_api_token_secret: "{{ pm_api_token_secret }}"
+      TF_VAR_ssh_public_keys: "{{ ssh_public_keys | to_json }}"
+
+  tasks:
+    - name: Ensure OpenTofu directory exists
+      ansible.builtin.stat:
+        path: "{{ tofu_dir }}"
+      register: tofu_dir_stat
+
+    - name: Fail if OpenTofu directory is missing
+      ansible.builtin.fail:
+        msg: "OpenTofu directory not found at {{ tofu_dir }}. Check the Semaphore working directory and repository layout."
+      when: not tofu_dir_stat.stat.exists
+
+    - name: Initialize OpenTofu backend and providers
+      ansible.builtin.command: tofu -chdir={{ tofu_dir }} init -input=false -no-color
+      environment: "{{ tofu_env }}"
+      changed_when: false
+
+    - name: Apply OpenTofu configuration
+      ansible.builtin.command: tofu -chdir={{ tofu_dir }} apply -auto-approve -input=false -no-color
+      environment: "{{ tofu_env }}"
+
+    - name: Wait for docker-vm01 SSH to become available
+      ansible.builtin.wait_for:
+        host: "{{ docker_vm_host }}"
+        port: 22
+        delay: 10
+        timeout: 600
+
+    - name: Add docker-vm01 to in-memory Ansible inventory
+      ansible.builtin.add_host:
+        name: "{{ docker_vm_name }}"
+        ansible_host: "{{ docker_vm_host }}"
+        ansible_user: "{{ docker_vm_user }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+        groups: docker_hosts
+
+- import_playbook: stacks/docker_host_bootstrap.yml
