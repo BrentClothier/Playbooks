@@ -1,0 +1,65 @@
+services:
+  romm:
+    image: rommapp/romm:latest
+    container_name: romm
+    restart: unless-stopped
+    environment:
+      - DB_HOST=romm-db
+      - DB_NAME=${ROMM_DB_NAME:-romm}
+      - DB_USER=${ROMM_DB_USER:-romm-user}
+      - DB_PASSWD=${ROMM_DB_PASSWORD}
+      - ROMM_AUTH_SECRET_KEY=${ROMM_AUTH_SECRET_KEY}
+
+      - IGDB_CLIENT_ID=${IGDB_CLIENT_ID}
+      - IGDB_CLIENT_SECRET=${IGDB_CLIENT_SECRET}
+
+      - SCREENSCRAPER_USER=${SCREENSCRAPER_USER}
+      - SCREENSCRAPER_PASSWORD=${SCREENSCRAPER_PASSWORD}
+
+      - STEAMGRIDDB_API_KEY=${STEAMGRIDDB_API_KEY}
+
+      - HASHEOUS_API_ENABLED=${HASHEOUS_API_ENABLED:-true}
+      - HLTB_API_ENABLED=${HLTB_API_ENABLED:-true}
+
+      - OIDC_ENABLED=${OIDC_ENABLED:-false}
+      - OIDC_PROVIDER=${OIDC_PROVIDER}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI}
+      - OIDC_SERVER_APPLICATION_URL=${OIDC_SERVER_APPLICATION_URL}
+    volumes:
+      - romm_resources:/romm/resources
+      - romm_redis_data:/redis-data
+      - /mnt/data/apps/romm:/romm/library
+      - /mnt/data/apps/romm/assets:/romm/assets
+      - /mnt/data/apps/romm/config:/romm/config
+    ports:
+      - "${ROMM_HTTP_PORT:-8080}:8080"
+    depends_on:
+      romm-db:
+        condition: service_healthy
+        restart: true
+
+  romm-db:
+    image: mariadb:latest
+    container_name: romm-db
+    restart: unless-stopped
+    environment:
+      - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
+      - MARIADB_DATABASE=${ROMM_DB_NAME:-romm}
+      - MARIADB_USER=${ROMM_DB_USER:-romm-user}
+      - MARIADB_PASSWORD=${ROMM_DB_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 5m
+      start_interval: 10s
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+volumes:
+  mysql_data:
+  romm_resources:
+  romm_redis_data:
