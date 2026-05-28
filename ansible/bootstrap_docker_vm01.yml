@@ -1,0 +1,28 @@
+---
+- name: Add docker-vm01 to in-memory inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    docker_vm_name: "docker-vm01.home"
+    docker_vm_host: "192.168.86.172"
+    docker_vm_user: "root"
+
+  tasks:
+    - name: Wait for docker-vm01 SSH to become available
+      ansible.builtin.wait_for:
+        host: "{{ docker_vm_host }}"
+        port: 22
+        delay: 5
+        timeout: 600
+
+    - name: Add docker-vm01 to in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ docker_vm_name }}"
+        ansible_host: "{{ docker_vm_host }}"
+        ansible_user: "{{ docker_vm_user }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+        groups: docker_hosts
+
+- import_playbook: stacks/docker_host_bootstrap.yml
