@@ -76,22 +76,79 @@ services:
       timeout: 5s
       retries: 5
 
+  postgres_gramps:
+    image: ghcr.io/davidmstraub/gramps-postgres:${GRAMPS_POSTGRES_VERSION:-latest}
+    container_name: gramps-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${GRAMPS_POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_PASSWORD_GRAMPS: ${GRAMPS_POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD_GRAMPS_USER: ${GRAMPS_POSTGRES_USER_PASSWORD}
+    volumes:
+      - gramps_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=postgres --dbname=postgres || exit 1"]
+      start_period: 30s
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  grampsweb-db-init:
+    image: ghcr.io/gramps-project/grampsweb:${GRAMPSWEB_VERSION:-latest}
+    container_name: grampsweb-db-init
+    restart: "no"
+    environment:
+      GRAMPS_POSTGRES_PASSWORD: ${GRAMPS_POSTGRES_PASSWORD}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -n "$$(find /root/.gramps/grampsdb -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+          echo "Gramps PostgreSQL tree configuration already exists; skipping import."
+          exit 0
+        fi
+        if [ ! -f "/import/${GRAMPS_IMPORT_FILENAME:-family-tree.gramps}" ]; then
+          echo "Missing /import/${GRAMPS_IMPORT_FILENAME:-family-tree.gramps}. Copy the Gramps XML export to the NFS backups/gramps directory before deploying."
+          exit 1
+        fi
+        echo "Importing Gramps tree into PostgreSQL..."
+        gramps -C postgres \
+          -i "/import/${GRAMPS_IMPORT_FILENAME:-family-tree.gramps}" \
+          --config=database.path:/root/.gramps/grampsdb \
+          --config=database.backend:postgresql \
+          --config=database.host:postgres_gramps \
+          --config=database.port:5432 \
+          --username=gramps \
+          --password="$${GRAMPS_POSTGRES_PASSWORD}"
+    volumes:
+      - grampsweb_tree_config:/root/.gramps/grampsdb
+      - type: volume
+        source: grampsweb_import
+        target: /import
+        read_only: true
+        volume:
+          nocopy: true
+    depends_on:
+      postgres_gramps:
+        condition: service_healthy
+
   grampsweb:
     image: ghcr.io/gramps-project/grampsweb:${GRAMPSWEB_VERSION:-latest}
     container_name: grampsweb
     restart: unless-stopped
     environment:
-      GRAMPSWEB_TREE: ${GRAMPSWEB_TREE:-Family Tree}
+      GRAMPSWEB_TREE: postgres
+      GRAMPSWEB_POSTGRES_USER: gramps
+      GRAMPSWEB_POSTGRES_PASSWORD: ${GRAMPS_POSTGRES_PASSWORD}
+      GRAMPSWEB_USER_DB_URI: postgresql://grampswebuser:${GRAMPS_POSTGRES_USER_PASSWORD}@postgres_gramps:5432/grampswebuser
+      GRAMPSWEB_SEARCH_INDEX_DB_URI: postgresql://gramps:${GRAMPS_POSTGRES_PASSWORD}@postgres_gramps:5432/gramps
       GRAMPSWEB_CELERY_CONFIG__broker_url: redis://grampsweb-redis:6379/0
       GRAMPSWEB_CELERY_CONFIG__result_backend: redis://grampsweb-redis:6379/0
       GRAMPSWEB_RATELIMIT_STORAGE_URI: redis://grampsweb-redis:6379/1
     volumes:
-      - grampsweb_users:/app/users
-      - grampsweb_index:/app/indexdir
+      - grampsweb_tree_config:/root/.gramps/grampsdb
       - grampsweb_thumbnails:/app/thumbnail_cache
       - grampsweb_cache:/app/cache
       - grampsweb_secret:/app/secret
-      - grampsweb_database:/root/.gramps/grampsdb
       - type: volume
         source: grampsweb_media
         target: /app/media
@@ -101,7 +158,11 @@ services:
     ports:
       - "${GRAMPSWEB_HTTP_PORT:-5000}:5000"
     depends_on:
+      grampsweb-db-init:
+        condition: service_completed_successfully
       grampsweb-redis:
+        condition: service_healthy
+      postgres_gramps:
         condition: service_healthy
 
   grampsweb-celery:
@@ -110,17 +171,19 @@ services:
     restart: unless-stopped
     command: celery -A gramps_webapi.celery worker --loglevel=INFO --concurrency=${GRAMPSWEB_CELERY_CONCURRENCY:-2}
     environment:
-      GRAMPSWEB_TREE: ${GRAMPSWEB_TREE:-Family Tree}
+      GRAMPSWEB_TREE: postgres
+      GRAMPSWEB_POSTGRES_USER: gramps
+      GRAMPSWEB_POSTGRES_PASSWORD: ${GRAMPS_POSTGRES_PASSWORD}
+      GRAMPSWEB_USER_DB_URI: postgresql://grampswebuser:${GRAMPS_POSTGRES_USER_PASSWORD}@postgres_gramps:5432/grampswebuser
+      GRAMPSWEB_SEARCH_INDEX_DB_URI: postgresql://gramps:${GRAMPS_POSTGRES_PASSWORD}@postgres_gramps:5432/gramps
       GRAMPSWEB_CELERY_CONFIG__broker_url: redis://grampsweb-redis:6379/0
       GRAMPSWEB_CELERY_CONFIG__result_backend: redis://grampsweb-redis:6379/0
       GRAMPSWEB_RATELIMIT_STORAGE_URI: redis://grampsweb-redis:6379/1
     volumes:
-      - grampsweb_users:/app/users
-      - grampsweb_index:/app/indexdir
+      - grampsweb_tree_config:/root/.gramps/grampsdb
       - grampsweb_thumbnails:/app/thumbnail_cache
       - grampsweb_cache:/app/cache
       - grampsweb_secret:/app/secret
-      - grampsweb_database:/root/.gramps/grampsdb
       - type: volume
         source: grampsweb_media
         target: /app/media
@@ -131,6 +194,8 @@ services:
       grampsweb:
         condition: service_started
       grampsweb-redis:
+        condition: service_healthy
+      postgres_gramps:
         condition: service_healthy
 
   grampsweb-redis:
@@ -167,13 +232,19 @@ volumes:
       o: "addr=${NFS_SERVER:-192.168.86.82},rw,nfsvers=4,hard,timeo=600,retrans=2"
       device: ":${NFS_EXPORT_ROOT:-/data/apps/family-archive}/gramps/media"
 
+  grampsweb_import:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=${NFS_SERVER:-192.168.86.82},ro,nfsvers=4,hard,timeo=600,retrans=2"
+      device: ":${NFS_EXPORT_ROOT:-/data/apps/family-archive}/backups/gramps"
+
   immich_postgres:
   immich_model_cache:
-  grampsweb_users:
-  grampsweb_index:
+  gramps_postgres_data:
+  grampsweb_tree_config:
   grampsweb_thumbnails:
   grampsweb_cache:
   grampsweb_secret:
-  grampsweb_database:
   grampsweb_tmp:
   grampsweb_redis_data:
