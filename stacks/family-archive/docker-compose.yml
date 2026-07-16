@@ -107,11 +107,11 @@ services:
           exit 0
         fi
         if [ ! -f "/import/${GRAMPS_IMPORT_FILENAME:-family-tree.gramps}" ]; then
-          echo "Missing /import/${GRAMPS_IMPORT_FILENAME:-family-tree.gramps}. Copy the Gramps XML export to the NFS backups/gramps directory before deploying."
+          echo "Missing /import/${GRAMPS_IMPORT_FILENAME:-family-tree.gramps}. Copy the export to the NFS backups/gramps directory before deploying."
           exit 1
         fi
-        echo "Importing Gramps tree into PostgreSQL..."
-        gramps -C postgres \
+        echo "Importing Gramps tree into PostgreSQL database gramps..."
+        gramps -C gramps \
           -i "/import/${GRAMPS_IMPORT_FILENAME:-family-tree.gramps}" \
           --config=database.path:/root/.gramps/grampsdb \
           --config=database.backend:postgresql \
@@ -136,7 +136,7 @@ services:
     container_name: grampsweb
     restart: unless-stopped
     environment:
-      GRAMPSWEB_TREE: postgres
+      GRAMPSWEB_TREE: gramps
       GRAMPSWEB_POSTGRES_USER: gramps
       GRAMPSWEB_POSTGRES_PASSWORD: ${GRAMPS_POSTGRES_PASSWORD}
       GRAMPSWEB_USER_DB_URI: postgresql://grampswebuser:${GRAMPS_POSTGRES_USER_PASSWORD}@postgres_gramps:5432/grampswebuser
@@ -171,7 +171,7 @@ services:
     restart: unless-stopped
     command: celery -A gramps_webapi.celery worker --loglevel=INFO --concurrency=${GRAMPSWEB_CELERY_CONCURRENCY:-2}
     environment:
-      GRAMPSWEB_TREE: postgres
+      GRAMPSWEB_TREE: gramps
       GRAMPSWEB_POSTGRES_USER: gramps
       GRAMPSWEB_POSTGRES_PASSWORD: ${GRAMPS_POSTGRES_PASSWORD}
       GRAMPSWEB_USER_DB_URI: postgresql://grampswebuser:${GRAMPS_POSTGRES_USER_PASSWORD}@postgres_gramps:5432/grampswebuser
