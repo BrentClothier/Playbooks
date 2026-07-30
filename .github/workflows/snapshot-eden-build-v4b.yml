@@ -1,0 +1,65 @@
+name: Snapshot experimental Eden v4 build b
+
+on:
+  push:
+    branches:
+      - eden-minecraft-socket-fix
+    paths:
+      - ".github/workflows/snapshot-eden-build-v4b.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: eden-minecraft-socket-fix
+
+      - name: Query latest v4 build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          response="$(gh api -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?branch=eden-minecraft-socket-fix&per_page=100")"
+          json="$(jq -c '[.workflow_runs[] | select(.name == "Build experimental Eden Minecraft socket fix v4")] | sort_by(.run_number) | reverse | .[0] // empty' <<<"$response")"
+          mkdir -p build-results
+          if [[ -z "$json" ]]; then
+            printf '# Eden v4 build snapshot b\n\nNo run found.\n' > build-results/eden-v4-snapshot-b.md
+          else
+            status="$(jq -r '.status' <<<"$json")"
+            conclusion="$(jq -r '.conclusion // ""' <<<"$json")"
+            url="$(jq -r '.html_url' <<<"$json")"
+            number="$(jq -r '.run_number' <<<"$json")"
+            sha="$(jq -r '.head_sha' <<<"$json")"
+            created="$(jq -r '.created_at' <<<"$json")"
+            updated="$(jq -r '.updated_at' <<<"$json")"
+            cat > build-results/eden-v4-snapshot-b.md <<EOF
+          # Eden v4 build snapshot b
+
+          - Run: ${number}
+          - Status: ${status}
+          - Conclusion: ${conclusion:-pending}
+          - Commit: ${sha}
+          - Created: ${created}
+          - Updated: ${updated}
+          - URL: ${url}
+          EOF
+          fi
+
+      - name: Commit snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin eden-minecraft-socket-fix
+          git add build-results/eden-v4-snapshot-b.md
+          git commit -m "Snapshot experimental Eden v4 build b" || exit 0
+          git push origin HEAD:eden-minecraft-socket-fix
