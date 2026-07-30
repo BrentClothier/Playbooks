@@ -1,0 +1,44 @@
+Build Linux AppImage	Check out Eden source	﻿2026-07-30T23:02:44.5631062Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5632610Z ##[group]Run actions/checkout@v4
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5632846Z with:
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5633051Z   repository: eden-emulator/mirror
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5633325Z   ref: 54046ac60ef5d8876b550be2546b89d48751de7e
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5633611Z   submodules: recursive
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5633832Z   fetch-depth: 0
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5634030Z   path: eden-src
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5636198Z   token: ***
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5636397Z   ssh-strict: true
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5636600Z   ssh-user: git
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5637024Z   persist-credentials: true
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5637254Z   clean: true
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5637458Z   sparse-checkout-cone-mode: true
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5637738Z   fetch-tags: false
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5637929Z   show-progress: true
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5638139Z   lfs: false
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5638316Z   set-safe-directory: true
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5638550Z   allow-unsafe-pr-checkout: false
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5638768Z env:
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5638981Z   EDEN_COMMIT: 54046ac60ef5d8876b550be2546b89d48751de7e
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5639381Z   PATCH_FILE: eden-fix/0001-propagate-socket-initialization-errors.patch
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5639729Z   BUILD_ID: test
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5639917Z   DEVEL: true
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5640094Z   FORCE_PGO: false
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5640274Z   TARGET: amd64
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5640457Z   COMPILER: gcc
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5640643Z   PGO_TARGET: standard
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5640857Z   FULL_ARCH: amd64-gcc-standard
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5641075Z   BUILD_TYPE: Release
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5641264Z   LTO: OFF
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5641431Z   CCACHE: OFF
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5641625Z   ARTIFACT_REF: minecraft-socket-fix
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5641890Z   GITHUB_TAG: minecraft-socket-fix
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5642144Z   B2_PUBLIC_URL: example.invalid
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5642512Z ##[endgroup]
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.5650131Z ##[command]/usr/bin/docker exec  0b67a936dfad9bcf0aaf6e5617af8214dae1a39dde7f88083338409df1804eb6 sh -c "cat /etc/*release | grep ^ID"
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.7063962Z Syncing repository: eden-emulator/mirror
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.7071163Z ##[group]Getting Git version info
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.7071929Z Working directory is '/__w/Playbooks/Playbooks/eden-src'
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.7090124Z ##[endgroup]
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.7091127Z The repository will be downloaded using the GitHub REST API
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.7092067Z To create a local Git repository instead, add Git 2.18 or higher to the PATH
+Build Linux AppImage	Check out Eden source	2026-07-30T23:02:44.7121655Z ##[error]Input 'submodules' not supported when falling back to download using the GitHub REST API. To create a local Git repository instead, add Git 2.18 or higher to the PATH.
