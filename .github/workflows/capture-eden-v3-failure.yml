@@ -1,0 +1,49 @@
+name: Capture experimental Eden v3 failure
+
+on:
+  push:
+    branches:
+      - eden-minecraft-socket-fix
+    paths:
+      - ".github/workflows/capture-eden-v3-failure.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: eden-minecraft-socket-fix
+
+      - name: Capture failed build log
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          response="$(gh api -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?branch=eden-minecraft-socket-fix&per_page=100")"
+          run_id="$(jq -r '[.workflow_runs[] | select(.name == "Build experimental Eden Minecraft socket fix v3")] | sort_by(.run_number) | reverse | .[0].id // empty' <<<"$response")"
+          mkdir -p build-results
+          if [[ -z "$run_id" ]]; then
+            echo "No v3 build run found" > build-results/eden-v3-failed.log
+          else
+            gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --log-failed > /tmp/eden-v3-failed.log 2>&1 || true
+            tail -n 5000 /tmp/eden-v3-failed.log > build-results/eden-v3-failed.log
+          fi
+
+      - name: Commit failure log
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin eden-minecraft-socket-fix
+          git add build-results/eden-v3-failed.log
+          git commit -m "Capture experimental Eden v3 failure" || exit 0
+          git push origin HEAD:eden-minecraft-socket-fix
