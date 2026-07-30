@@ -1,0 +1,129 @@
+name: Monitor experimental Eden build v5
+
+on:
+  push:
+    branches:
+      - eden-minecraft-socket-fix
+    paths:
+      - ".github/workflows/monitor-eden-build-v5.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: eden-minecraft-socket-fix
+
+      - name: Wait for the Eden v4 build workflow
+        id: wait
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="eden-minecraft-socket-fix"
+          wanted_name="Build experimental Eden Minecraft socket fix v4"
+
+          for attempt in $(seq 1 180); do
+            response="$(gh api -H 'Accept: application/vnd.github+json' \
+              "repos/${GITHUB_REPOSITORY}/actions/runs?branch=${branch}&per_page=100")"
+            json="$(jq -c --arg wanted "$wanted_name" \
+              '[.workflow_runs[] | select(.name == $wanted)] | sort_by(.run_number) | reverse | .[0] // empty' \
+              <<<"$response")"
+
+            if [[ -n "$json" ]]; then
+              run_id="$(jq -r '.id' <<<"$json")"
+              status="$(jq -r '.status' <<<"$json")"
+              conclusion="$(jq -r '.conclusion // ""' <<<"$json")"
+              run_url="$(jq -r '.html_url' <<<"$json")"
+              run_number="$(jq -r '.run_number' <<<"$json")"
+              head_sha="$(jq -r '.head_sha' <<<"$json")"
+              echo "Build run #${run_number}: ${status} ${conclusion}"
+
+              if [[ "$status" == "completed" ]]; then
+                {
+                  echo "found=true"
+                  echo "run_id=$run_id"
+                  echo "status=$status"
+                  echo "conclusion=$conclusion"
+                  echo "run_url=$run_url"
+                  echo "run_number=$run_number"
+                  echo "head_sha=$head_sha"
+                } >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            else
+              echo "Build run not visible yet (attempt ${attempt})"
+            fi
+
+            sleep 120
+          done
+
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          echo "Timed out waiting for the build workflow" >&2
+          exit 1
+
+      - name: Record result and failed log
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FOUND: ${{ steps.wait.outputs.found }}
+          RUN_ID: ${{ steps.wait.outputs.run_id }}
+          STATUS: ${{ steps.wait.outputs.status }}
+          CONCLUSION: ${{ steps.wait.outputs.conclusion }}
+          RUN_URL: ${{ steps.wait.outputs.run_url }}
+          RUN_NUMBER: ${{ steps.wait.outputs.run_number }}
+          HEAD_SHA: ${{ steps.wait.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p build-results
+          now="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          release_url=""
+          if [[ "${CONCLUSION:-}" == "success" && -n "${RUN_NUMBER:-}" ]]; then
+            release_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/eden-minecraft-fix-v4-${RUN_NUMBER}"
+          fi
+
+          cat > build-results/eden-minecraft-socket-fix-status-v5.md <<EOF
+          # Experimental Eden v4 build status
+
+          - Checked: ${now}
+          - Found build run: ${FOUND:-false}
+          - Status: ${STATUS:-unknown}
+          - Conclusion: ${CONCLUSION:-unknown}
+          - Run number: ${RUN_NUMBER:-unknown}
+          - Source commit: ${HEAD_SHA:-unknown}
+          - Workflow run: ${RUN_URL:-unavailable}
+          - Release: ${release_url:-not published}
+          EOF
+
+          if [[ -n "${RUN_ID:-}" && "${CONCLUSION:-}" != "success" ]]; then
+            gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed > /tmp/eden-failed.log 2>&1 || true
+            tail -n 5000 /tmp/eden-failed.log > build-results/eden-minecraft-socket-fix-failed-v5.log || true
+          else
+            rm -f build-results/eden-minecraft-socket-fix-failed-v5.log
+          fi
+
+      - name: Commit build result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin eden-minecraft-socket-fix
+          git add build-results
+          if git diff --cached --quiet; then
+            echo "No status change to commit"
+            exit 0
+          fi
+          git commit -m "Record experimental Eden v4 build result"
+          git push origin HEAD:eden-minecraft-socket-fix
