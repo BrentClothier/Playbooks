@@ -1,0 +1,27 @@
+diff --git a/src/core/hle/service/sockets/bsd.cpp b/src/core/hle/service/sockets/bsd.cpp
+--- a/src/core/hle/service/sockets/bsd.cpp
++++ b/src/core/hle/service/sockets/bsd.cpp
+@@ -507,6 +507,12 @@ std::pair<s32, Errno> BSD::SocketImpl(Domain domain, Type type, Protocol protocol
+     UNIMPLEMENTED_IF_MSG(unk_flag, "Unknown flag in type");
+     type = static_cast<Type>(static_cast<u32>(type) & ~0x20000000);
+ 
++    if (domain != Domain::Unspecified && domain != Domain::INET) {
++        LOG_WARNING(Service, "Unsupported socket domain={}, returning AFNOSUPPORT",
++                    static_cast<u32>(domain));
++        return {-1, Errno::AFNOSUPPORT};
++    }
++
+     const s32 fd = FindFreeFileDescriptorHandle();
+     if (fd < 0) {
+         LOG_ERROR(Service, "No more file descriptors available");
+diff --git a/src/core/hle/service/sockets/sockets.h b/src/core/hle/service/sockets/sockets.h
+--- a/src/core/hle/service/sockets/sockets.h
++++ b/src/core/hle/service/sockets/sockets.h
+@@ -24,6 +24,7 @@ enum class Errno : u32 {
+     MFILE = 24,
+     PIPE = 32,
+     MSGSIZE = 90,
++    AFNOSUPPORT = 97,
+     CONNABORTED = 103,
+     CONNRESET = 104,
+     NOTCONN = 107,
