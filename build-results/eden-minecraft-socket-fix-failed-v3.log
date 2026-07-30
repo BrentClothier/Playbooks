@@ -1,0 +1,31 @@
+Build Linux AppImage	Prepare patched source	﻿2026-07-30T23:08:16.0617395Z ##[group]Run set -euxo pipefail
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0617731Z ^[[36;1mset -euxo pipefail^[[0m
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0618002Z ^[[36;1mcp -a eden-ci/.ci eden-src/.ci^[[0m
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0618274Z ^[[36;1mcd eden-src^[[0m
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0618517Z ^[[36;1mgit apply --check "../${PATCH_FILE}"^[[0m
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0619019Z ^[[36;1mgit apply "../${PATCH_FILE}"^[[0m
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0619285Z ^[[36;1mgit diff --check^[[0m
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0619513Z ^[[36;1mgit diff --stat^[[0m
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0619884Z shell: bash --noprofile --norc -e -o pipefail {0}
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0620179Z env:
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0620413Z   EDEN_COMMIT: 54046ac60ef5d8876b550be2546b89d48751de7e
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0620840Z   PATCH_FILE: eden-fix/0001-propagate-socket-initialization-errors.patch
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0621212Z   BUILD_ID: test
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0621400Z   DEVEL: true
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0621585Z   FORCE_PGO: false
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0621775Z   TARGET: amd64
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0621961Z   COMPILER: gcc
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0622195Z   PGO_TARGET: standard
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0622415Z   FULL_ARCH: amd64-gcc-standard
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0622651Z   BUILD_TYPE: Release
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0622846Z   LTO: OFF
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0623016Z   CCACHE: OFF
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0623214Z   ARTIFACT_REF: minecraft-socket-fix
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0623484Z   GITHUB_TAG: minecraft-socket-fix
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0623736Z   B2_PUBLIC_URL: example.invalid
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.0623969Z ##[endgroup]
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.1008011Z + cp -a eden-ci/.ci eden-src/.ci
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.1042985Z + cd eden-src
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.1043839Z + git apply --check ../eden-fix/0001-propagate-socket-initialization-errors.patch
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.1058278Z error: corrupt patch at ../eden-fix/0001-propagate-socket-initialization-errors.patch:40
+Build Linux AppImage	Prepare patched source	2026-07-30T23:08:16.1096068Z ##[error]Process completed with exit code 128.
