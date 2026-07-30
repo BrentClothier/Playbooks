@@ -1,0 +1,47 @@
+name: Snapshot experimental Eden v4 release
+
+on:
+  push:
+    branches:
+      - eden-minecraft-socket-fix
+    paths:
+      - ".github/workflows/snapshot-eden-release-v4.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: eden-minecraft-socket-fix
+
+      - name: Query release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build-results
+          gh release view eden-minecraft-fix-v4-1 \
+            --repo "$GITHUB_REPOSITORY" \
+            --json name,tagName,url,assets > /tmp/release.json
+          {
+            echo '# Eden v4 release'
+            echo
+            jq -r '"- Name: " + .name, "- Tag: " + .tagName, "- URL: " + .url, "", "## Assets", (.assets[] | "- " + .name + " — " + .url)' /tmp/release.json
+          } > build-results/eden-v4-release.md
+
+      - name: Commit release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin eden-minecraft-socket-fix
+          git add build-results/eden-v4-release.md
+          git commit -m "Record experimental Eden v4 release assets" || exit 0
+          git push origin HEAD:eden-minecraft-socket-fix
