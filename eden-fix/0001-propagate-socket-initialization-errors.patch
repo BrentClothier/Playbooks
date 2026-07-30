@@ -1,0 +1,119 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brent Clothier <BrentClothier@users.noreply.github.com>
+Date: Thu, 30 Jul 2026 23:00:00 -0700
+Subject: [PATCH] sockets: propagate native socket initialization failures
+
+Minecraft Bedrock 1.26.x probes an unsupported socket address family during
+startup. Eden currently discards the error returned by Network::Socket::Initialize
+and reports a valid guest descriptor. Subsequent operations use an invalid host
+socket and the guest terminates with a userspace panic.
+
+Return EAFNOSUPPORT to the guest and release the descriptor when native socket
+creation fails. Also check airplane mode before attempting native socket creation.
+This does not implement IPv6; it allows software to handle the unsupported family
+and fall back or continue offline instead of receiving a false success.
+---
+ src/core/hle/service/sockets/bsd.cpp               | 18 ++++++++++++------
+ src/core/hle/service/sockets/sockets.h             |  1 +
+ src/core/hle/service/sockets/sockets_translate.cpp |  2 ++
+ src/core/internal_network/network.cpp              |  4 ++++
+ src/core/internal_network/network.h                |  1 +
+ 5 files changed, 20 insertions(+), 6 deletions(-)
+
+diff --git a/src/core/hle/service/sockets/bsd.cpp b/src/core/hle/service/sockets/bsd.cpp
+index 9ffaeedd4..000000000 100644
+--- a/src/core/hle/service/sockets/bsd.cpp
++++ b/src/core/hle/service/sockets/bsd.cpp
+@@ -507,6 +507,13 @@ std::pair<s32, Errno> BSD::SocketImpl(Domain domain, Type type, Protocol protocol
+     UNIMPLEMENTED_IF_MSG(unk_flag, "Unknown flag in type");
+     type = static_cast<Type>(static_cast<u32>(type) & ~0x20000000);
+ 
++    const bool is_connection_based = IsConnectionBased(type);
++    if (Settings::values.airplane_mode.GetValue() && is_connection_based) {
++        LOG_ERROR(Service, "Airplane mode is enabled, cannot create socket");
++        return {-1, Errno::NOTCONN};
++    }
++
+     const s32 fd = FindFreeFileDescriptorHandle();
+     if (fd < 0) {
+         LOG_ERROR(Service, "No more file descriptors available");
+@@ -527,14 +534,13 @@ std::pair<s32, Errno> BSD::SocketImpl(Domain domain, Type type, Protocol protocol
+         descriptor.socket = std::make_shared<Network::Socket>();
+     }
+ 
+-    descriptor.socket->Initialize(Translate(domain), Translate(type), Translate(protocol));
+-    descriptor.is_connection_based = IsConnectionBased(type);
+-
+-    if (Settings::values.airplane_mode.GetValue() && descriptor.is_connection_based) {
+-        LOG_ERROR(Service, "Airplane mode is enabled, cannot create socket");
+-        return {-1, Errno::NOTCONN};
++    const Network::Errno initialize_result =
++        descriptor.socket->Initialize(Translate(domain), Translate(type), Translate(protocol));
++    if (initialize_result != Network::Errno::SUCCESS) {
++        file_descriptors[fd].reset();
++        return {-1, Translate(initialize_result)};
+     }
++    descriptor.is_connection_based = is_connection_based;
+ 
+     return {fd, Errno::SUCCESS};
+ }
+diff --git a/src/core/hle/service/sockets/sockets.h b/src/core/hle/service/sockets/sockets.h
+index 2837ce71e..000000000 100644
+--- a/src/core/hle/service/sockets/sockets.h
++++ b/src/core/hle/service/sockets/sockets.h
+@@ -25,6 +25,7 @@ enum class Errno : u32 {
+     MFILE = 24,
+     PIPE = 32,
+     MSGSIZE = 90,
++    AFNOSUPPORT = 97,
+     CONNABORTED = 103,
+     CONNRESET = 104,
+     NOTCONN = 107,
+diff --git a/src/core/hle/service/sockets/sockets_translate.cpp b/src/core/hle/service/sockets/sockets_translate.cpp
+index 46ef0a89c..000000000 100644
+--- a/src/core/hle/service/sockets/sockets_translate.cpp
++++ b/src/core/hle/service/sockets/sockets_translate.cpp
+@@ -30,6 +30,8 @@ Errno Translate(Network::Errno value) {
+         return Errno::MFILE;
+     case Network::Errno::PIPE:
+         return Errno::PIPE;
++    case Network::Errno::AFNOSUPPORT:
++        return Errno::AFNOSUPPORT;
+     case Network::Errno::CONNREFUSED:
+         return Errno::CONNREFUSED;
+     case Network::Errno::NOTCONN:
+diff --git a/src/core/internal_network/network.cpp b/src/core/internal_network/network.cpp
+index 75c7bc46a..000000000 100644
+--- a/src/core/internal_network/network.cpp
++++ b/src/core/internal_network/network.cpp
+@@ -131,6 +131,8 @@ Errno TranslateNativeError(int e, CallType call_type = CallType::Other) {
+         return Errno::MFILE;
+     case WSAENOTCONN:
+         return Errno::NOTCONN;
++    case WSAEAFNOSUPPORT:
++        return Errno::AFNOSUPPORT;
+     case WSAEWOULDBLOCK:
+         return Errno::AGAIN;
+     case WSAECONNREFUSED:
+@@ -281,6 +283,8 @@ Errno TranslateNativeError(int e, CallType call_type = CallType::Other) {
+         return Errno::CONNABORTED;
+     case ENOTCONN:
+         return Errno::NOTCONN;
++    case EAFNOSUPPORT:
++        return Errno::AFNOSUPPORT;
+     case EAGAIN:
+         return Errno::AGAIN;
+     case ECONNREFUSED:
+diff --git a/src/core/internal_network/network.h b/src/core/internal_network/network.h
+index ce259c0e6..000000000 100644
+--- a/src/core/internal_network/network.h
++++ b/src/core/internal_network/network.h
+@@ -51,6 +51,7 @@ enum class Errno {
+     MSGSIZE,
+     INPROGRESS,
+     ISCONN,
++    AFNOSUPPORT,
+     OTHER,
+ };
+-- 
+2.50.1
