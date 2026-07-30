@@ -1,0 +1,22 @@
+Build Linux AppImage	Install build dependencies	﻿2026-07-30T23:13:49.2518084Z ##[group]Run ./.ci/deps/arch.sh
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2518407Z ^[[36;1m./.ci/deps/arch.sh^[[0m
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2518838Z shell: bash --noprofile --norc -e -o pipefail {0}
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2519150Z env:
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2519393Z   EDEN_COMMIT: 54046ac60ef5d8876b550be2546b89d48751de7e
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2520090Z   PATCH_FILE: eden-fix/0002-return-afnosupport-for-unsupported-socket-domains.patch
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2520630Z   BUILD_ID: test
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2520833Z   DEVEL: true
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2521027Z   FORCE_PGO: false
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2521251Z   TARGET: amd64
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2521454Z   COMPILER: gcc
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2521654Z   PGO_TARGET: standard
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2521891Z   FULL_ARCH: amd64-gcc-standard
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2522132Z   BUILD_TYPE: Release
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2522547Z   LTO: OFF
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2522731Z   CCACHE: OFF
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2522947Z   ARTIFACT_REF: minecraft-socket-fix-v3
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2523236Z   GITHUB_TAG: minecraft-socket-fix-v3
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2523571Z   B2_PUBLIC_URL: example.invalid
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2523813Z ##[endgroup]
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2949275Z /__w/_temp/1ac0b1c6-ade1-44e7-976c-96eee1426588.sh: line 1: ./.ci/deps/arch.sh: No such file or directory
+Build Linux AppImage	Install build dependencies	2026-07-30T23:13:49.2991112Z ##[error]Process completed with exit code 127.
