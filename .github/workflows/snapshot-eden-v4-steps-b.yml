@@ -1,0 +1,54 @@
+name: Snapshot experimental Eden v4 steps b
+
+on:
+  push:
+    branches:
+      - eden-minecraft-socket-fix
+    paths:
+      - ".github/workflows/snapshot-eden-v4-steps-b.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: eden-minecraft-socket-fix
+
+      - name: Query latest v4 job and steps
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          response="$(gh api -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?branch=eden-minecraft-socket-fix&per_page=100")"
+          run_id="$(jq -r '[.workflow_runs[] | select(.name == "Build experimental Eden Minecraft socket fix v4")] | sort_by(.run_number) | reverse | .[0].id // empty' <<<"$response")"
+          mkdir -p build-results
+          if [[ -z "$run_id" ]]; then
+            printf '# Eden v4 step snapshot b\n\nNo run found.\n' > build-results/eden-v4-steps-b.md
+          else
+            jobs="$(gh api -H 'Accept: application/vnd.github+json' \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100")"
+            {
+              echo '# Eden v4 step snapshot b'
+              echo
+              jq -r '.jobs[] | "## " + .name + " — " + .status + " / " + (.conclusion // "pending"), (.steps[] | "- " + .name + ": " + .status + " / " + (.conclusion // "pending"))' <<<"$jobs"
+            } > build-results/eden-v4-steps-b.md
+          fi
+
+      - name: Commit snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin eden-minecraft-socket-fix
+          git add build-results/eden-v4-steps-b.md
+          git commit -m "Snapshot experimental Eden v4 steps b" || exit 0
+          git push origin HEAD:eden-minecraft-socket-fix
