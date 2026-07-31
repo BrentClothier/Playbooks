@@ -1,0 +1,148 @@
+name: Build experimental Eden Minecraft socket fix v5
+
+on:
+  push:
+    branches:
+      - eden-minecraft-socket-fix
+    paths:
+      - ".github/workflows/build-eden-minecraft-fix-v5.yml"
+      - "eden-fix/0003-map-destination-address-and-address-family-errors.patch"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: eden-minecraft-socket-fix-v5
+  cancel-in-progress: true
+
+env:
+  EDEN_COMMIT: 54046ac60ef5d8876b550be2546b89d48751de7e
+  PATCH_FILE: eden-fix/0003-map-destination-address-and-address-family-errors.patch
+  BUILD_ID: test
+  DEVEL: "true"
+  FORCE_PGO: "false"
+  TARGET: amd64
+  COMPILER: gcc
+  PGO_TARGET: standard
+  FULL_ARCH: amd64-gcc-standard
+  BUILD_TYPE: Release
+  LTO: "OFF"
+  CCACHE: "OFF"
+  ARTIFACT_REF: minecraft-socket-fix-v5
+  GITHUB_TAG: minecraft-socket-fix-v5
+  B2_PUBLIC_URL: example.invalid
+
+jobs:
+  build:
+    name: Build Linux AppImage
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    container:
+      image: ghcr.io/pkgforge-dev/archlinux:latest
+      options: --privileged --device /dev/fuse
+
+    steps:
+      - name: Check out patch repository
+        uses: actions/checkout@v4
+
+      - name: Bootstrap Git for recursive source checkout
+        shell: bash
+        run: |
+          set -euxo pipefail
+          pacman -Sy --noconfirm git ca-certificates
+          git --version
+
+      - name: Check out Eden source
+        uses: actions/checkout@v4
+        with:
+          repository: eden-emulator/mirror
+          ref: ${{ env.EDEN_COMMIT }}
+          submodules: recursive
+          fetch-depth: 0
+          path: eden-src
+
+      - name: Check out Eden build workflow scripts
+        uses: actions/checkout@v4
+        with:
+          repository: Eden-CI/Workflow
+          ref: master
+          path: eden-ci
+
+      - name: Prepare patched source and CI scripts
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf eden-src/.ci
+          cp -a eden-ci/.ci eden-src/.ci
+          test -x eden-src/.ci/deps/arch.sh
+          test -x eden-src/.ci/build/configure.sh
+          test -x eden-src/.ci/package/linux.sh
+          cd eden-src
+          git apply --check "../${PATCH_FILE}"
+          git apply "../${PATCH_FILE}"
+          git diff --check
+          git diff --stat
+
+      - name: Archive corresponding source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          tar --exclude=.git -C eden-src -cJf Eden-minecraft-socket-fix-v5-source.tar.xz .
+
+      - name: Install build dependencies
+        shell: bash
+        working-directory: eden-src
+        run: ./.ci/deps/arch.sh
+
+      - name: Configure
+        shell: bash
+        working-directory: eden-src
+        run: ./.ci/build/configure.sh
+
+      - name: Build
+        shell: bash
+        working-directory: eden-src
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Package AppImage
+        shell: bash
+        working-directory: eden-src
+        run: ./.ci/package/linux.sh
+
+      - name: Prepare release files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release
+          cp eden-src/artifacts/*.AppImage release/
+          cp Eden-minecraft-socket-fix-v5-source.tar.xz release/
+          cp "${PATCH_FILE}" release/
+          (cd release && sha256sum * > SHA256SUMS.txt)
+          ls -lh release
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Minecraft-socket-fix-Linux-v5
+          path: release/*
+          if-no-files-found: error
+
+      - name: Publish experimental prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: eden-minecraft-fix-v5-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Eden experimental Minecraft socket fix v5 #${{ github.run_number }}
+          prerelease: true
+          generate_release_notes: false
+          body: |
+            Experimental, unofficial Eden Linux build for testing Minecraft Bedrock 1.26.x.
+
+            Based on Eden commit `${{ env.EDEN_COMMIT }}`. This includes the previous unsupported-domain handling plus explicit translation for destination-address-required and address-family-not-supported socket errors, preventing those native failures from being silently converted into guest success.
+
+            This is not full IPv6 support. It may expose a later emulator incompatibility. Back up saves before testing. No ROMs, keys, firmware, or other copyrighted game data are included.
+
+            The exact source patch and a corresponding patched source archive are attached to satisfy GPL source-availability requirements.
+          files: |
+            release/*
