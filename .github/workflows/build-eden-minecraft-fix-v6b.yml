@@ -1,0 +1,93 @@
+name: Build experimental Eden Minecraft socket fix v6b
+
+on:
+  push:
+    branches: [eden-minecraft-socket-fix]
+    paths:
+      - ".github/workflows/build-eden-minecraft-fix-v6b.yml"
+      - "eden-fix/apply-v6.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  EDEN_COMMIT: 54046ac60ef5d8876b550be2546b89d48751de7e
+  BUILD_ID: test
+  DEVEL: "true"
+  FORCE_PGO: "false"
+  TARGET: amd64
+  COMPILER: gcc
+  PGO_TARGET: standard
+  FULL_ARCH: amd64-gcc-standard
+  BUILD_TYPE: Release
+  LTO: "OFF"
+  CCACHE: "OFF"
+  ARTIFACT_REF: minecraft-socket-fix-v6
+  GITHUB_TAG: minecraft-socket-fix-v6
+  B2_PUBLIC_URL: example.invalid
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    container:
+      image: ghcr.io/pkgforge-dev/archlinux:latest
+      options: --privileged --device /dev/fuse
+    steps:
+      - uses: actions/checkout@v4
+      - run: pacman -Sy --noconfirm git ca-certificates python
+      - uses: actions/checkout@v4
+        with:
+          repository: eden-emulator/mirror
+          ref: ${{ env.EDEN_COMMIT }}
+          submodules: recursive
+          fetch-depth: 0
+          path: eden-src
+      - uses: actions/checkout@v4
+        with:
+          repository: Eden-CI/Workflow
+          ref: master
+          path: eden-ci
+      - name: Patch source
+        run: |
+          set -euxo pipefail
+          rm -rf eden-src/.ci
+          cp -a eden-ci/.ci eden-src/.ci
+          cp eden-fix/apply-v6.py eden-src/apply-v6.py
+          cd eden-src
+          python apply-v6.py
+          git diff --check
+          git diff --stat
+      - name: Archive source
+        run: tar --exclude=.git -C eden-src -cJf Eden-minecraft-socket-fix-v6-source.tar.xz .
+      - name: Dependencies
+        working-directory: eden-src
+        run: ./.ci/deps/arch.sh
+      - name: Configure
+        working-directory: eden-src
+        run: ./.ci/build/configure.sh
+      - name: Build
+        working-directory: eden-src
+        run: cmake --build build --parallel "$(nproc)"
+      - name: Package
+        working-directory: eden-src
+        run: ./.ci/package/linux.sh
+      - name: Prepare release
+        run: |
+          mkdir -p release
+          cp eden-src/artifacts/*.AppImage release/
+          cp Eden-minecraft-socket-fix-v6-source.tar.xz release/
+          cp eden-fix/apply-v6.py release/
+          (cd release && sha256sum * > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Minecraft-socket-fix-Linux-v6
+          path: release/*
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: eden-minecraft-fix-v6-${{ github.run_number }}
+          name: Eden experimental Minecraft socket fix v6 #${{ github.run_number }}
+          prerelease: true
+          body: Experimental unofficial Linux build. Adds explicit guest translations for unsupported address-family and destination-address-required socket errors. Back up saves before testing.
+          files: release/*
