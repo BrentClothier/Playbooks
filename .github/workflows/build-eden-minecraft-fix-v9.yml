@@ -1,0 +1,124 @@
+name: Build experimental Eden Minecraft fix v9
+
+on:
+  push:
+    branches:
+      - eden-minecraft-socket-fix
+    paths:
+      - ".github/workflows/build-eden-minecraft-fix-v9.yml"
+      - "eden-fix/apply-v7.py"
+      - "eden-fix/apply-v9.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  EDEN_COMMIT: 54046ac60ef5d8876b550be2546b89d48751de7e
+  BUILD_ID: test
+  DEVEL: "true"
+  FORCE_PGO: "false"
+  TARGET: amd64
+  COMPILER: gcc
+  PGO_TARGET: standard
+  FULL_ARCH: amd64-gcc-standard
+  BUILD_TYPE: Release
+  LTO: "OFF"
+  CCACHE: "OFF"
+  ARTIFACT_REF: minecraft-fix-v9
+  GITHUB_TAG: minecraft-fix-v9
+  B2_PUBLIC_URL: example.invalid
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    container:
+      image: ghcr.io/pkgforge-dev/archlinux:latest
+      options: --privileged --device /dev/fuse
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap Git
+        run: pacman -Sy --noconfirm git ca-certificates python
+
+      - name: Check out Eden source
+        uses: actions/checkout@v4
+        with:
+          repository: eden-emulator/mirror
+          ref: ${{ env.EDEN_COMMIT }}
+          submodules: recursive
+          fetch-depth: 0
+          path: eden-src
+
+      - name: Check out Eden CI scripts
+        uses: actions/checkout@v4
+        with:
+          repository: Eden-CI/Workflow
+          ref: master
+          path: eden-ci
+
+      - name: Apply v7 socket fixes and v9 DMA fix
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf eden-src/.ci
+          cp -a eden-ci/.ci eden-src/.ci
+          cp eden-fix/apply-v7.py eden-src/apply-v7.py
+          cp eden-fix/apply-v9.py eden-src/apply-v9.py
+          cd eden-src
+          python apply-v7.py
+          python apply-v9.py
+          git diff --check
+          git diff --stat
+
+      - name: Archive source
+        run: tar --exclude=.git -C eden-src -cJf Eden-minecraft-fix-v9-source.tar.xz .
+
+      - name: Install dependencies
+        working-directory: eden-src
+        run: ./.ci/deps/arch.sh
+
+      - name: Configure
+        working-directory: eden-src
+        run: ./.ci/build/configure.sh
+
+      - name: Build
+        working-directory: eden-src
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Package AppImage
+        working-directory: eden-src
+        run: ./.ci/package/linux.sh
+
+      - name: Prepare release
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release
+          cp eden-src/artifacts/*.AppImage release/Eden-Linux-minecraft-fix-v9-amd64-gcc-standard.AppImage
+          cp Eden-minecraft-fix-v9-source.tar.xz release/
+          cp eden-fix/apply-v7.py release/
+          cp eden-fix/apply-v9.py release/
+          (cd release && sha256sum * > SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Minecraft-fix-Linux-v9
+          path: release/*
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: eden-minecraft-fix-v9-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Eden experimental Minecraft fix v9 #${{ github.run_number }}
+          prerelease: true
+          body: |
+            Experimental Linux build based on Eden commit `${{ env.EDEN_COMMIT }}`.
+
+            Includes the v7 socket fixes and a bounded partial-copy implementation for mixed-layout Maxwell DMA transfers whose lengths are not multiples of 16 bytes.
+
+            Back up saves before testing.
+          files: release/*
