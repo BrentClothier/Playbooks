@@ -1,0 +1,78 @@
+diff --git a/src/core/hle/service/sockets/bsd.cpp b/src/core/hle/service/sockets/bsd.cpp
+--- a/src/core/hle/service/sockets/bsd.cpp
++++ b/src/core/hle/service/sockets/bsd.cpp
+@@ -507,6 +507,12 @@ std::pair<s32, Errno> BSD::SocketImpl(Domain domain, Type type, Protocol protocol
+     UNIMPLEMENTED_IF_MSG(unk_flag, "Unknown flag in type");
+     type = static_cast<Type>(static_cast<u32>(type) & ~0x20000000);
+ 
++    if (domain != Domain::Unspecified && domain != Domain::INET) {
++        LOG_WARNING(Service, "Unsupported socket domain={}, returning AFNOSUPPORT",
++                    static_cast<u32>(domain));
++        return {-1, Errno::AFNOSUPPORT};
++    }
++
+     const s32 fd = FindFreeFileDescriptorHandle();
+     if (fd < 0) {
+         LOG_ERROR(Service, "No more file descriptors available");
+diff --git a/src/core/hle/service/sockets/sockets.h b/src/core/hle/service/sockets/sockets.h
+--- a/src/core/hle/service/sockets/sockets.h
++++ b/src/core/hle/service/sockets/sockets.h
+@@ -24,7 +24,9 @@ enum class Errno : u32 {
+     MFILE = 24,
+     PIPE = 32,
++    DESTADDRREQ = 89,
+     MSGSIZE = 90,
++    AFNOSUPPORT = 97,
+     CONNABORTED = 103,
+     CONNRESET = 104,
+     NOTCONN = 107,
+diff --git a/src/core/hle/service/sockets/sockets_translate.cpp b/src/core/hle/service/sockets/sockets_translate.cpp
+--- a/src/core/hle/service/sockets/sockets_translate.cpp
++++ b/src/core/hle/service/sockets/sockets_translate.cpp
+@@ -30,6 +30,10 @@ Errno Translate(Network::Errno value) {
+         return Errno::MFILE;
+     case Network::Errno::PIPE:
+         return Errno::PIPE;
++    case Network::Errno::DESTADDRREQ:
++        return Errno::DESTADDRREQ;
++    case Network::Errno::AFNOSUPPORT:
++        return Errno::AFNOSUPPORT;
+     case Network::Errno::CONNREFUSED:
+         return Errno::CONNREFUSED;
+     case Network::Errno::NOTCONN:
+diff --git a/src/core/internal_network/network.h b/src/core/internal_network/network.h
+--- a/src/core/internal_network/network.h
++++ b/src/core/internal_network/network.h
+@@ -51,6 +51,8 @@ enum class Errno {
+     MSGSIZE,
+     INPROGRESS,
+     ISCONN,
++    DESTADDRREQ,
++    AFNOSUPPORT,
+     OTHER,
+ };
+diff --git a/src/core/internal_network/network.cpp b/src/core/internal_network/network.cpp
+--- a/src/core/internal_network/network.cpp
++++ b/src/core/internal_network/network.cpp
+@@ -131,6 +131,10 @@ Errno TranslateNativeError(int e, CallType call_type = CallType::Other) {
+         return Errno::MFILE;
+     case WSAENOTCONN:
+         return Errno::NOTCONN;
++    case WSAEDESTADDRREQ:
++        return Errno::DESTADDRREQ;
++    case WSAEAFNOSUPPORT:
++        return Errno::AFNOSUPPORT;
+     case WSAEWOULDBLOCK:
+         return Errno::AGAIN;
+     case WSAECONNREFUSED:
+@@ -281,6 +285,10 @@ Errno TranslateNativeError(int e, CallType call_type = CallType::Other) {
+         return Errno::CONNABORTED;
+     case ENOTCONN:
+         return Errno::NOTCONN;
++    case EDESTADDRREQ:
++        return Errno::DESTADDRREQ;
++    case EAFNOSUPPORT:
++        return Errno::AFNOSUPPORT;
+     case EAGAIN:
+         return Errno::AGAIN;
+     case ECONNREFUSED:
