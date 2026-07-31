@@ -1,0 +1,30 @@
+name: Inspect experimental Eden v6 build
+on:
+  workflow_dispatch:
+  push:
+    branches: [eden-minecraft-socket-fix]
+    paths: [".github/workflows/inspect-eden-v6.yml"]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: eden-minecraft-socket-fix
+      - name: Record latest v6 run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build-results
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/build-eden-minecraft-fix-v6.yml/runs?branch=eden-minecraft-socket-fix&per_page=1" > /tmp/run.json
+          jq -r '"# Experimental Eden v6 build status\n\n- Status: \(.workflow_runs[0].status // "missing")\n- Conclusion: \(.workflow_runs[0].conclusion // "pending")\n- Workflow run: \(.workflow_runs[0].html_url // "unavailable")"' /tmp/run.json > build-results/eden-v6-status.md
+      - name: Commit status
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add build-results/eden-v6-status.md
+          git commit -m "Record Eden v6 build status" || exit 0
+          git push origin HEAD:eden-minecraft-socket-fix
