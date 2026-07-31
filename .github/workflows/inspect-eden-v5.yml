@@ -1,0 +1,58 @@
+name: Inspect experimental Eden v5 build
+
+on:
+  push:
+    branches:
+      - eden-minecraft-socket-fix
+    paths:
+      - ".github/workflows/inspect-eden-v5.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: eden-minecraft-socket-fix
+
+      - name: Inspect latest v5 run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build-results
+          RUN_JSON=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/build-eden-minecraft-fix-v5.yml/runs?branch=eden-minecraft-socket-fix&per_page=1")
+          echo "$RUN_JSON" > build-results/eden-v5-run.json
+          RUN_ID=$(jq -r '.workflow_runs[0].id // empty' <<<"$RUN_JSON")
+          STATUS=$(jq -r '.workflow_runs[0].status // "missing"' <<<"$RUN_JSON")
+          CONCLUSION=$(jq -r '.workflow_runs[0].conclusion // "pending"' <<<"$RUN_JSON")
+          URL=$(jq -r '.workflow_runs[0].html_url // "unavailable"' <<<"$RUN_JSON")
+          {
+            echo "# Experimental Eden v5 build status"
+            echo
+            echo "- Status: $STATUS"
+            echo "- Conclusion: $CONCLUSION"
+            echo "- Workflow run: $URL"
+          } > build-results/eden-v5-status.md
+
+          if [[ -n "$RUN_ID" && "$STATUS" == "completed" && "$CONCLUSION" != "success" ]]; then
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/logs" > build-results/eden-v5-logs.zip
+            unzip -p build-results/eden-v5-logs.zip | tail -n 250 > build-results/eden-v5-failure-tail.txt || true
+          fi
+
+      - name: Commit inspection results
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-results/eden-v5-run.json build-results/eden-v5-status.md
+          test ! -f build-results/eden-v5-failure-tail.txt || git add build-results/eden-v5-failure-tail.txt
+          git commit -m "Record Eden v5 build status" || exit 0
+          git push origin HEAD:eden-minecraft-socket-fix
