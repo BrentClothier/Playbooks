@@ -1,0 +1,134 @@
+name: Build experimental Eden Minecraft compatibility v18b
+
+on:
+  push:
+    branches:
+      - eden-minecraft-socket-fix
+    paths:
+      - ".github/workflows/build-eden-minecraft-fix-v18b.yml"
+      - "eden-fix/apply-v7.py"
+      - "eden-fix/apply-v9.py"
+      - "eden-fix/apply-v11.py"
+      - "eden-fix/apply-v12.py"
+      - "eden-fix/apply-v14b.py"
+      - "eden-fix/apply-v15.py"
+      - "eden-fix/apply-v16.py"
+      - "eden-fix/apply-v17.py"
+      - "eden-fix/apply-v18b.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  EDEN_COMMIT: 54046ac60ef5d8876b550be2546b89d48751de7e
+  BUILD_ID: test
+  DEVEL: "true"
+  FORCE_PGO: "false"
+  TARGET: amd64
+  COMPILER: gcc
+  PGO_TARGET: standard
+  FULL_ARCH: amd64-gcc-standard
+  BUILD_TYPE: Release
+  LTO: "OFF"
+  CCACHE: "OFF"
+  ARTIFACT_REF: minecraft-compatibility-v18b
+  GITHUB_TAG: minecraft-compatibility-v18b
+  B2_PUBLIC_URL: example.invalid
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    container:
+      image: ghcr.io/pkgforge-dev/archlinux:latest
+      options: --privileged --device /dev/fuse
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap Git
+        run: pacman -Sy --noconfirm git ca-certificates python
+
+      - name: Check out Eden source
+        uses: actions/checkout@v4
+        with:
+          repository: eden-emulator/mirror
+          ref: ${{ env.EDEN_COMMIT }}
+          submodules: recursive
+          fetch-depth: 0
+          path: eden-src
+
+      - name: Check out Eden CI scripts
+        uses: actions/checkout@v4
+        with:
+          repository: Eden-CI/Workflow
+          ref: master
+          path: eden-ci
+
+      - name: Apply Minecraft compatibility patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf eden-src/.ci
+          cp -a eden-ci/.ci eden-src/.ci
+          for v in 7 9 11 12 14b 15 16 17 18b; do
+            cp "eden-fix/apply-v${v}.py" "eden-src/apply-v${v}.py"
+          done
+          cd eden-src
+          for v in 7 9 11 12 14b 15 16 17 18b; do
+            python "apply-v${v}.py"
+          done
+          git diff --check
+          git diff --stat
+
+      - name: Archive source
+        run: tar --exclude=.git -C eden-src -cJf Eden-minecraft-compatibility-v18b-source.tar.xz .
+
+      - name: Install dependencies
+        working-directory: eden-src
+        run: ./.ci/deps/arch.sh
+
+      - name: Configure
+        working-directory: eden-src
+        run: ./.ci/build/configure.sh
+
+      - name: Build
+        working-directory: eden-src
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Package AppImage
+        working-directory: eden-src
+        run: ./.ci/package/linux.sh
+
+      - name: Prepare release
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release
+          cp eden-src/artifacts/*.AppImage release/Eden-Linux-minecraft-compatibility-v18b-amd64-gcc-standard.AppImage
+          cp Eden-minecraft-compatibility-v18b-source.tar.xz release/
+          for v in 7 9 11 12 14b 15 16 17 18b; do
+            cp "eden-fix/apply-v${v}.py" release/
+          done
+          (cd release && sha256sum * > SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Minecraft-compatibility-Linux-v18b
+          path: release/*
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: eden-minecraft-compatibility-v18b-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Eden experimental Minecraft compatibility v18b #${{ github.run_number }}
+          prerelease: true
+          body: |
+            Experimental Linux build based on Eden commit `${{ env.EDEN_COMMIT }}`.
+
+            V18b fixes the patch application failure from v18 and keeps the targeted transfer-memory, nvmap, and MSAA depth/stencil compatibility changes.
+
+            Back up saves before testing.
+          files: release/*
