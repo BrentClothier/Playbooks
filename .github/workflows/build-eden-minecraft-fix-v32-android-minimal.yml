@@ -1,0 +1,167 @@
+name: Build minimal Eden Minecraft Android fix v32
+
+on:
+  push:
+    branches:
+      - eden-minecraft-socket-fix
+    paths:
+      - ".github/workflows/build-eden-minecraft-fix-v32-android-minimal.yml"
+      - "eden-fix/apply-v7.py"
+      - "eden-fix/apply-v9.py"
+      - "eden-fix/apply-v11.py"
+      - "eden-fix/apply-v12.py"
+      - "eden-fix/apply-v17.py"
+      - "eden-fix/apply-v26.py"
+      - "eden-fix/apply-v29.py"
+      - "eden-fix/apply-v30.py"
+      - "eden-fix/apply-v32-core-cleanup.py"
+      - "eden-fix/apply-v32-android.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  EDEN_COMMIT: 54046ac60ef5d8876b550be2546b89d48751de7e
+  BUILD_ID: minecraft-fix-v32-minimal
+  DEVEL: "true"
+  CCACHE: "false"
+  TARGET: standard
+  TYPE: Release
+  PROJECT_PRETTYNAME: Eden-Minecraft-Fix
+  ARTIFACT_REF: v32-minimal
+  GIT_TAG_NAME: minecraft-fix-v32-minimal
+
+jobs:
+  build:
+    name: Android arm64 minimal release
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out compatibility patches
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install required Android SDK components
+        shell: bash
+        run: |
+          set -euxo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.31.6"
+
+      - name: Check out Eden source
+        uses: actions/checkout@v4
+        with:
+          repository: eden-emulator/mirror
+          ref: ${{ env.EDEN_COMMIT }}
+          submodules: recursive
+          fetch-depth: 0
+          path: eden-src
+
+      - name: Check out Eden CI scripts
+        uses: actions/checkout@v4
+        with:
+          repository: Eden-CI/Workflow
+          ref: master
+          path: eden-ci
+
+      - name: Apply minimal Minecraft compatibility fixes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf eden-src/.ci
+          cp -a eden-ci/.ci eden-src/.ci
+
+          patches=(7 9 11 12 17 32-core-cleanup 26 29 30 32-android)
+          for patch in "${patches[@]}"; do
+            cp "eden-fix/apply-v${patch}.py" "eden-src/apply-v${patch}.py"
+          done
+
+          cd eden-src
+          for patch in "${patches[@]}"; do
+            python "apply-v${patch}.py"
+          done
+
+          git diff --check
+          git diff --stat
+
+      - name: Archive patched source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          tar --exclude=.git -C eden-src -cJf Eden-minecraft-android-fix-v32-minimal-source.tar.xz .
+
+      - name: Install native build dependencies
+        working-directory: eden-src
+        run: ./.ci/deps/android.sh
+
+      - name: Build minimal side-by-side APK
+        working-directory: eden-src
+        shell: bash
+        run: |
+          set -euxo pipefail
+          chmod +x ./.ci/build/android.sh
+          JAVA_HOME="${JAVA_HOME_17_X64:-$JAVA_HOME}" \
+            ./.ci/build/android.sh -t standard -b Release
+
+      - name: Prepare release files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release
+          cp eden-src/artifacts/*.apk release/
+          cp Eden-minecraft-android-fix-v32-minimal-source.tar.xz release/
+
+          patches=(7 9 11 12 17 32-core-cleanup 26 29 30 32-android)
+          for patch in "${patches[@]}"; do
+            cp "eden-fix/apply-v${patch}.py" release/
+          done
+
+          (cd release && sha256sum * > SHA256SUMS.txt)
+          ls -lh release
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Minecraft-Fix-Android-v32-Minimal
+          path: release/*
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: eden-minecraft-fix-android-v32-minimal-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Eden Minecraft Fix Android v32 Minimal #${{ github.run_number }}
+          prerelease: true
+          body: |
+            Minimal Android arm64 comparison build based on Eden commit `${{ env.EDEN_COMMIT }}`.
+
+            V31 crashed on the AYN Thor when the Minecraft update was enabled. This build removes two earlier Linux experiments that were not responsible for the final working result and that exercise driver-sensitive Vulkan paths:
+            - the speculative multisampled depth/stencil image clear from v18b/v18c
+            - the disproven viewport-transform pipeline-key change from v27
+
+            It retains:
+            - socket and eventfd compatibility
+            - Minecraft-scoped DeviceShared transfer-memory compatibility
+            - symmetric transfer-memory cleanup and safe nvmap unpin handling
+            - framebuffer extent clamping
+            - sample-count-relaxed alias registration
+            - sample-aware MSAA alias synchronization
+
+            The package ID remains `dev.eden.eden_emulator.minecraftfix`, so it should update the configured v31 test app. Diagnostic markers from v26, v29, and v30 remain available in the shared Eden log.
+
+            Back up Minecraft saves before testing.
+          files: release/*
