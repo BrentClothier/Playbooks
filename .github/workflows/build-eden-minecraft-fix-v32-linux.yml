@@ -1,5 +1,7 @@
 name: Build Eden Minecraft Linux cache-size fix v32
 
+# Retry 2: the first hosted runner lost communication during compilation.
+
 on:
   push:
     branches:
