@@ -1,0 +1,22 @@
+diff --git a/src/core/file_sys/savedata_factory.cpp b/src/core/file_sys/savedata_factory.cpp
+--- a/src/core/file_sys/savedata_factory.cpp
++++ b/src/core/file_sys/savedata_factory.cpp
+@@ -59,8 +59,16 @@ SaveDataFactory::SaveDataFactory(Core::System& system_, ProgramId program_id_,
+                                  VirtualDir save_directory_)
+     : system{system_}, program_id{program_id_}, dir{std::move(save_directory_)} {
+-    // Delete all temporary storages
+-    // On hardware, it is expected that temporary storage be empty at first use.
++    // Delete all temporary storages.
++    // On hardware, it is expected that temporary storage be empty at first use. Keep the empty
++    // root itself available: cache-only save enumeration opens SaveDataSpaceId::Temporary before
++    // any title has created a cache and treats a missing root as invalid storage.
+     dir->DeleteSubdirectoryRecursive("temp");
++    const auto temporary_root = dir->CreateDirectoryRelative("temp");
++    if (temporary_root == nullptr) {
++        LOG_ERROR(Service_FS, "V31_FIX FailedToCreateTemporarySaveRoot");
++    } else {
++        LOG_INFO(Service_FS, "V31_FIX RecreatedTemporarySaveRoot");
++    }
+ }
+
+ SaveDataFactory::~SaveDataFactory() = default;
