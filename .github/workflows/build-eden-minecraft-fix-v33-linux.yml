@@ -1,5 +1,7 @@
 name: Build Eden Minecraft Linux cache-reader fix v33
 
+# Retry 1: the initial hosted runner failed during configure after all patches applied cleanly.
+
 on:
   push:
     branches:
