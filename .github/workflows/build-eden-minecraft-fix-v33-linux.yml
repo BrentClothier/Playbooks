@@ -1,0 +1,174 @@
+name: Build Eden Minecraft Linux cache-reader fix v33
+
+on:
+  push:
+    branches:
+      - eden-minecraft-socket-fix
+    paths:
+      - ".github/workflows/build-eden-minecraft-fix-v33-linux.yml"
+      - "eden-fix/apply-v7.py"
+      - "eden-fix/apply-v9.py"
+      - "eden-fix/apply-v11.py"
+      - "eden-fix/apply-v12.py"
+      - "eden-fix/apply-v14b.py"
+      - "eden-fix/apply-v15.py"
+      - "eden-fix/apply-v16.py"
+      - "eden-fix/apply-v17.py"
+      - "eden-fix/apply-v18b.py"
+      - "eden-fix/apply-v18c.py"
+      - "eden-fix/apply-v19.py"
+      - "eden-fix/apply-v20.py"
+      - "eden-fix/apply-v21.py"
+      - "eden-fix/apply-v22b.py"
+      - "eden-fix/apply-v23b.py"
+      - "eden-fix/apply-v24.py"
+      - "eden-fix/apply-v25.py"
+      - "eden-fix/apply-v26.py"
+      - "eden-fix/apply-v27.py"
+      - "eden-fix/apply-v29.py"
+      - "eden-fix/apply-v30.py"
+      - "eden-fix/apply-v31-linux-storage.py"
+      - "eden-fix/apply-v32-linux-cache-size.py"
+      - "eden-fix/apply-v33-linux-cache-reader.py"
+      - "eden-fix/v33-linux-cache-reader.patch"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  EDEN_COMMIT: 54046ac60ef5d8876b550be2546b89d48751de7e
+  BUILD_ID: test
+  DEVEL: "true"
+  FORCE_PGO: "false"
+  TARGET: amd64
+  COMPILER: gcc
+  PGO_TARGET: standard
+  FULL_ARCH: amd64-gcc-standard
+  BUILD_TYPE: Release
+  LTO: "OFF"
+  CCACHE: "OFF"
+  ARTIFACT_REF: minecraft-linux-cache-reader-fix-v33
+  GITHUB_TAG: minecraft-linux-cache-reader-fix-v33
+  B2_PUBLIC_URL: example.invalid
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    container:
+      image: ghcr.io/pkgforge-dev/archlinux:latest
+      options: --privileged --device /dev/fuse
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap Git
+        run: pacman -Sy --noconfirm git ca-certificates python
+
+      - name: Check out Eden source
+        uses: actions/checkout@v4
+        with:
+          repository: eden-emulator/mirror
+          ref: ${{ env.EDEN_COMMIT }}
+          submodules: recursive
+          fetch-depth: 0
+          path: eden-src
+
+      - name: Check out Eden CI scripts
+        uses: actions/checkout@v4
+        with:
+          repository: Eden-CI/Workflow
+          ref: master
+          path: eden-ci
+
+      - name: Apply v30 graphics fixes and v31-v33 storage fixes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf eden-src/.ci
+          cp -a eden-ci/.ci eden-src/.ci
+          for v in 7 9 11 12 14b 15 16 17 18b 18c 19 20 21 22b 23b 24 25 26 27 29 30; do
+            cp "eden-fix/apply-v${v}.py" "eden-src/apply-v${v}.py"
+          done
+          cp eden-fix/apply-v31-linux-storage.py eden-src/
+          cp eden-fix/apply-v32-linux-cache-size.py eden-src/
+          cp eden-fix/apply-v33-linux-cache-reader.py eden-src/
+          cd eden-src
+          for v in 7 9 11 12 14b 15 16 17 18b 18c 19 20 21 22b 23b 24 25 26 27 29 30; do
+            python "apply-v${v}.py"
+          done
+          python apply-v31-linux-storage.py
+          python apply-v32-linux-cache-size.py
+          python apply-v33-linux-cache-reader.py
+          git diff --check
+          git diff --stat
+
+      - name: Archive source
+        run: tar --exclude=.git -C eden-src -cJf Eden-minecraft-linux-cache-reader-fix-v33-source.tar.xz .
+
+      - name: Install dependencies
+        working-directory: eden-src
+        run: ./.ci/deps/arch.sh
+
+      - name: Configure
+        working-directory: eden-src
+        run: ./.ci/build/configure.sh
+
+      - name: Build
+        working-directory: eden-src
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Package AppImage
+        working-directory: eden-src
+        run: ./.ci/package/linux.sh
+
+      - name: Prepare release
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release
+          cp eden-src/artifacts/*.AppImage release/Eden-Linux-minecraft-cache-reader-fix-v33-amd64-gcc-standard.AppImage
+          cp Eden-minecraft-linux-cache-reader-fix-v33-source.tar.xz release/
+          for v in 7 9 11 12 14b 15 16 17 18b 18c 19 20 21 22b 23b 24 25 26 27 29 30; do
+            cp "eden-fix/apply-v${v}.py" release/
+          done
+          cp eden-fix/apply-v31-linux-storage.py release/
+          cp eden-fix/apply-v32-linux-cache-size.py release/
+          cp eden-fix/apply-v33-linux-cache-reader.py eden-fix/v33-linux-cache-reader.patch release/
+          (cd release && sha256sum * > SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Minecraft-Linux-cache-reader-fix-v33
+          path: release/*
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: eden-minecraft-linux-cache-reader-fix-v33-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Eden Minecraft Linux cache-reader fix v33 #${{ github.run_number }}
+          prerelease: true
+          body: |
+            Experimental Linux build based on Eden commit `${{ env.EDEN_COMMIT }}`.
+
+            This applies the exact working v30 graphics patch stack, followed by the unchanged v31
+            Temporary-root fix and v32 persistent cache-size fix.
+
+            Both supplied v32 logs showed `CreateCacheStorage` running, including on the second
+            launch. Eden command 62 was still opening a Temporary-space save reader, while cache
+            data is stored under `NandUser/save/cache/<program id>` and the generic reader cannot
+            recognize that layout. V33 makes command 62 inspect only the current program's existing
+            NandUser cache and return a `SaveDataType::Cache` entry with v32's persisted data size.
+
+            The reader remains read-only when no cache exists. No cache is created by enumeration,
+            and no graphics, aliasing, or MSAA code is changed. Look for:
+
+            - `V33_FIX OpenCacheStorageInfoReader program_id=0100D71004694000`
+            - `V33_FIX CacheStorageInfo ... found=true size=0x8000000`
+            - `V33_FIX ReadCacheStorageInfo count=1 total=1`
+            - the existing `V32_FIX`, `V31_FIX`, `V30_FIX`, and `V29_FIX` markers
+
+            Back up saves before testing.
+          files: release/*

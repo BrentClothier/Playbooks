@@ -1,0 +1,142 @@
+diff --git a/src/core/hle/service/filesystem/fsp/fs_i_save_data_info_reader.cpp b/src/core/hle/service/filesystem/fsp/fs_i_save_data_info_reader.cpp
+index 495b131df..cf890db30 100644
+--- a/src/core/hle/service/filesystem/fsp/fs_i_save_data_info_reader.cpp
++++ b/src/core/hle/service/filesystem/fsp/fs_i_save_data_info_reader.cpp
+@@ -14,15 +14,21 @@ namespace Service::FileSystem {
+ 
+ ISaveDataInfoReader::ISaveDataInfoReader(Core::System& system_,
+                                          std::shared_ptr<SaveDataController> save_data_controller_,
+-                                         FileSys::SaveDataSpaceId space)
++                                         FileSys::SaveDataSpaceId space,
++                                         std::optional<u64> cache_program_id)
+     : ServiceFramework{system_, "ISaveDataInfoReader"}, save_data_controller{
+-                                                            save_data_controller_} {
++                                                            save_data_controller_},
++      cache_only_reader{cache_program_id.has_value()} {
+     static const FunctionInfo functions[] = {
+         {0, D<&ISaveDataInfoReader::ReadSaveDataInfo>, "ReadSaveDataInfo"},
+     };
+     RegisterHandlers(functions);
+ 
+-    FindAllSaves(space);
++    if (cache_program_id.has_value()) {
++        FindCacheStorageSave(space, *cache_program_id);
++    } else {
++        FindAllSaves(space);
++    }
+ }
+ 
+ ISaveDataInfoReader::~ISaveDataInfoReader() = default;
+@@ -60,9 +66,55 @@ Result ISaveDataInfoReader::ReadSaveDataInfo(
+     std::memcpy(out_entries.data(), begin, range_size);
+     *out_count = actual_entries;
+ 
++    if (cache_only_reader) {
++        LOG_INFO(Service_FS, "V33_FIX ReadCacheStorageInfo count={} total={}", actual_entries,
++                 info.size());
++    }
++
+     R_SUCCEED();
+ }
+ 
++void ISaveDataInfoReader::FindCacheStorageSave(FileSys::SaveDataSpaceId space,
++                                               u64 cache_program_id) {
++    FileSys::VirtualDir save_root{};
++    const auto result = save_data_controller->OpenSaveDataSpace(&save_root, space);
++    if (result != ResultSuccess || save_root == nullptr) {
++        LOG_ERROR(Service_FS,
++                  "V33_FIX CacheStorageInfo program_id={:016X} space_id={:02X} root_valid=false",
++                  cache_program_id, space);
++        return;
++    }
++
++    const auto cache =
++        save_root->GetDirectoryRelative(fmt::format("save/cache/{:016X}", cache_program_id));
++    if (cache == nullptr) {
++        LOG_INFO(Service_FS,
++                 "V33_FIX CacheStorageInfo program_id={:016X} space_id={:02X} found=false",
++                 cache_program_id, space);
++        return;
++    }
++
++    const auto size = save_data_controller->ReadSaveDataSize(
++        FileSys::SaveDataType::Cache, cache_program_id, u128{});
++    info.emplace_back(SaveDataInfo{
++        0,
++        space,
++        FileSys::SaveDataType::Cache,
++        {},
++        {},
++        0,
++        cache_program_id,
++        size.normal,
++        0,
++        FileSys::SaveDataRank::Primary,
++        {},
++    });
++
++    LOG_INFO(Service_FS,
++             "V33_FIX CacheStorageInfo program_id={:016X} space_id={:02X} found=true size={:#x}",
++             cache_program_id, space, size.normal);
++}
++
+ void ISaveDataInfoReader::FindAllSaves(FileSys::SaveDataSpaceId space) {
+     FileSys::VirtualDir save_root{};
+     const auto result = save_data_controller->OpenSaveDataSpace(&save_root, space);
+diff --git a/src/core/hle/service/filesystem/fsp/fs_i_save_data_info_reader.h b/src/core/hle/service/filesystem/fsp/fs_i_save_data_info_reader.h
+index e45ad852b..069f6dcb1 100644
+--- a/src/core/hle/service/filesystem/fsp/fs_i_save_data_info_reader.h
++++ b/src/core/hle/service/filesystem/fsp/fs_i_save_data_info_reader.h
+@@ -3,6 +3,7 @@
+ 
+ #pragma once
+ 
++#include <optional>
+ #include <vector>
+ #include "common/common_types.h"
+ #include "core/hle/service/cmif_types.h"
+@@ -16,7 +17,8 @@ class ISaveDataInfoReader final : public ServiceFramework<ISaveDataInfoReader> {
+ public:
+     explicit ISaveDataInfoReader(Core::System& system_,
+                                  std::shared_ptr<SaveDataController> save_data_controller_,
+-                                 FileSys::SaveDataSpaceId space);
++                                 FileSys::SaveDataSpaceId space,
++                                 std::optional<u64> cache_program_id = std::nullopt);
+     ~ISaveDataInfoReader() override;
+ 
+     struct SaveDataInfo {
+@@ -39,12 +41,14 @@ public:
+ 
+ private:
+     void FindAllSaves(FileSys::SaveDataSpaceId space);
++    void FindCacheStorageSave(FileSys::SaveDataSpaceId space, u64 cache_program_id);
+     void FindNormalSaves(FileSys::SaveDataSpaceId space, const FileSys::VirtualDir& type);
+     void FindTemporaryStorageSaves(FileSys::SaveDataSpaceId space, const FileSys::VirtualDir& type);
+ 
+     std::shared_ptr<SaveDataController> save_data_controller;
+     std::vector<SaveDataInfo> info;
+     u64 next_entry_index = 0;
++    bool cache_only_reader = false;
+ };
+ 
+ } // namespace Service::FileSystem
+diff --git a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+index 77b0078c8..7adc4e3fa 100644
+--- a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
++++ b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+@@ -367,10 +367,12 @@ Result FSP_SRV::OpenSaveDataInfoReaderBySaveDataSpaceId(
+ 
+ Result FSP_SRV::OpenSaveDataInfoReaderOnlyCacheStorage(
+     OutInterface<ISaveDataInfoReader> out_interface) {
+-    LOG_WARNING(Service_FS, "(STUBBED) called");
++    LOG_INFO(Service_FS, "V33_FIX OpenCacheStorageInfoReader program_id={:016X}", program_id);
+ 
+-    *out_interface = std::make_shared<ISaveDataInfoReader>(system, save_data_controller,
+-                                                           FileSys::SaveDataSpaceId::Temporary);
++    // Cache storage is persistent user-NAND data. Filter the reader to this process so it does
++    // not expose another title's cache and so the operation remains read-only when none exists.
++    *out_interface = std::make_shared<ISaveDataInfoReader>(
++        system, save_data_controller, FileSys::SaveDataSpaceId::User, program_id);
+ 
+     R_SUCCEED();
+ }
