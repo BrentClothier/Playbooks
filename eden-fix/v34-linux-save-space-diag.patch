@@ -1,0 +1,82 @@
+diff --git a/src/core/hle/service/am/service/application_functions.cpp b/src/core/hle/service/am/service/application_functions.cpp
+index e640913b1..b534eaade 100644
+--- a/src/core/hle/service/am/service/application_functions.cpp
++++ b/src/core/hle/service/am/service/application_functions.cpp
+@@ -235,8 +235,9 @@ Result IApplicationFunctions::GetDisplayVersion(Out<DisplayVersion> out_display_
+ Result IApplicationFunctions::ExtendSaveData(Out<u64> out_required_size, FileSys::SaveDataType type,
+                                              Common::UUID user_id, u64 normal_size,
+                                              u64 journal_size) {
+-    LOG_DEBUG(Service_AM, "called with type={} user_id={} normal={:#x} journal={:#x}",
+-              static_cast<u8>(type), user_id.FormattedString(), normal_size, journal_size);
++    LOG_INFO(Service_AM,
++             "V34_DIAG ExtendSaveData type={} user_id={} normal={:#x} journal={:#x}",
++             static_cast<u8>(type), user_id.FormattedString(), normal_size, journal_size);
+ 
+     system.GetFileSystemController().OpenSaveDataController()->WriteSaveDataSize(
+         type, m_applet->program_id, user_id.AsU128(), {normal_size, journal_size});
+@@ -257,6 +258,9 @@ Result IApplicationFunctions::GetSaveDataSize(Out<u64> out_normal_size, Out<u64>
+ 
+     *out_normal_size = size.normal;
+     *out_journal_size = size.journal;
++    LOG_INFO(Service_AM,
++             "V34_DIAG GetSaveDataSize type={} user_id={} normal={:#x} journal={:#x}", type,
++             user_id.FormattedString(), *out_normal_size, *out_journal_size);
+     R_SUCCEED();
+ }
+ 
+@@ -286,6 +290,8 @@ Result IApplicationFunctions::GetSaveDataSizeMax(Out<u64> out_max_normal_size,
+     *out_max_normal_size = 0xFFFFFFF;
+     *out_max_journal_size = 0xFFFFFFF;
+ 
++    LOG_INFO(Service_AM, "V34_DIAG GetSaveDataSizeMax normal={:#x} journal={:#x}",
++             *out_max_normal_size, *out_max_journal_size);
+     R_SUCCEED();
+ }
+ 
+@@ -302,6 +308,8 @@ Result IApplicationFunctions::GetCacheStorageMax(Out<u32> out_cache_storage_inde
+     *out_cache_storage_index_max = static_cast<u32>(raw_nacp->cache_storage_max_index);
+     *out_max_journal_size = static_cast<u64>(raw_nacp->cache_storage_data_and_journal_max_size);
+ 
++    LOG_INFO(Service_AM, "V34_DIAG GetCacheStorageMax index_max={} size_max={:#x}",
++             *out_cache_storage_index_max, *out_max_journal_size);
+     R_SUCCEED();
+ }
+ 
+diff --git a/src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp b/src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp
+index d16602022..74371fd09 100644
+--- a/src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp
++++ b/src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp
+@@ -134,17 +134,15 @@ Result IFileSystem::Commit() {
+ 
+ Result IFileSystem::GetFreeSpaceSize(
+     Out<s64> out_size, const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path) {
+-    LOG_DEBUG(Service_FS, "called");
+-
+     *out_size = size_getter.get_free_size();
++    LOG_INFO(Service_FS, "V34_DIAG GetFreeSpaceSize path={} size={:#x}", path->str, *out_size);
+     R_SUCCEED();
+ }
+ 
+ Result IFileSystem::GetTotalSpaceSize(
+     Out<s64> out_size, const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path) {
+-    LOG_DEBUG(Service_FS, "called");
+-
+     *out_size = size_getter.get_total_size();
++    LOG_INFO(Service_FS, "V34_DIAG GetTotalSpaceSize path={} size={:#x}", path->str, *out_size);
+     R_SUCCEED();
+ }
+ 
+diff --git a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+index 77b0078c8..18460e776 100644
+--- a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
++++ b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+@@ -266,7 +266,8 @@ Result FSP_SRV::IsExFatSupported(Out<bool> out_is_supported) {
+ Result FSP_SRV::OpenSaveDataFileSystem(OutInterface<IFileSystem> out_interface,
+                                        FileSys::SaveDataSpaceId space_id,
+                                        FileSys::SaveDataAttribute attribute) {
+-    LOG_INFO(Service_FS, "called.");
++    LOG_INFO(Service_FS, "V34_DIAG OpenSaveDataFileSystem space_id={:02X} attribute={}",
++             space_id, attribute.DebugInfo());
+ 
+     FileSys::VirtualDir dir{};
+     R_TRY(save_data_controller->OpenSaveData(&dir, space_id, attribute));
