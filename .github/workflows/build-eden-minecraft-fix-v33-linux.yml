@@ -111,7 +111,15 @@ jobs:
 
       - name: Install dependencies
         working-directory: eden-src
-        run: ./.ci/deps/arch.sh
+        shell: bash
+        run: |
+          ./.ci/deps/arch.sh
+
+          # The current debloated qt6-base-mini package omits Qt6OpenGLConfig.cmake, causing Eden's
+          # required Qt6 OpenGL component check to fail before compilation. Reinstall Arch's full
+          # qt6-base package after the shared dependency script replaces it with the mini variant.
+          pacman -S --noconfirm --overwrite "*" qt6-base
+          test -f /usr/lib/cmake/Qt6OpenGL/Qt6OpenGLConfig.cmake
 
       - name: Configure
         working-directory: eden-src
