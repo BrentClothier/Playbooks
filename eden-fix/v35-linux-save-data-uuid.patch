@@ -1,0 +1,78 @@
+diff --git a/src/core/hle/service/am/service/application_functions.cpp b/src/core/hle/service/am/service/application_functions.cpp
+index b534eaade..77998591b 100644
+--- a/src/core/hle/service/am/service/application_functions.cpp
++++ b/src/core/hle/service/am/service/application_functions.cpp
+@@ -233,14 +233,14 @@ Result IApplicationFunctions::GetDisplayVersion(Out<DisplayVersion> out_display_
+ }
+ 
+ Result IApplicationFunctions::ExtendSaveData(Out<u64> out_required_size, FileSys::SaveDataType type,
+-                                             Common::UUID user_id, u64 normal_size,
++                                             SaveDataUserId user_id, u64 normal_size,
+                                              u64 journal_size) {
+     LOG_INFO(Service_AM,
+-             "V34_DIAG ExtendSaveData type={} user_id={} normal={:#x} journal={:#x}",
+-             static_cast<u8>(type), user_id.FormattedString(), normal_size, journal_size);
++             "V35_FIX ExtendSaveData type={} user_id={} normal={:#x} journal={:#x}",
++             static_cast<u8>(type), user_id.value.FormattedString(), normal_size, journal_size);
+ 
+     system.GetFileSystemController().OpenSaveDataController()->WriteSaveDataSize(
+-        type, m_applet->program_id, user_id.AsU128(), {normal_size, journal_size});
++        type, m_applet->program_id, user_id.value.AsU128(), {normal_size, journal_size});
+ 
+     // The following value is used to indicate the amount of space remaining on failure
+     // due to running out of space. Since we always succeed, this should be 0.
+@@ -250,17 +250,17 @@ Result IApplicationFunctions::ExtendSaveData(Out<u64> out_required_size, FileSys
+ }
+ 
+ Result IApplicationFunctions::GetSaveDataSize(Out<u64> out_normal_size, Out<u64> out_journal_size,
+-                                              FileSys::SaveDataType type, Common::UUID user_id) {
+-    LOG_DEBUG(Service_AM, "called with type={} user_id={}", type, user_id.FormattedString());
++                                              FileSys::SaveDataType type, SaveDataUserId user_id) {
++    const auto& uuid = user_id.value;
+ 
+     const auto size = system.GetFileSystemController().OpenSaveDataController()->ReadSaveDataSize(
+-        type, m_applet->program_id, user_id.AsU128());
++        type, m_applet->program_id, uuid.AsU128());
+ 
+     *out_normal_size = size.normal;
+     *out_journal_size = size.journal;
+     LOG_INFO(Service_AM,
+-             "V34_DIAG GetSaveDataSize type={} user_id={} normal={:#x} journal={:#x}", type,
+-             user_id.FormattedString(), *out_normal_size, *out_journal_size);
++             "V35_FIX GetSaveDataSize type={} user_id={} normal={:#x} journal={:#x}", type,
++             uuid.FormattedString(), *out_normal_size, *out_journal_size);
+     R_SUCCEED();
+ }
+ 
+diff --git a/src/core/hle/service/am/service/application_functions.h b/src/core/hle/service/am/service/application_functions.h
+index b97ed7e25..39124120b 100644
+--- a/src/core/hle/service/am/service/application_functions.h
++++ b/src/core/hle/service/am/service/application_functions.h
+@@ -24,6 +24,15 @@ namespace Service::AM {
+ struct Applet;
+ class IStorage;
+ 
++// The AM wire ABI aligns user IDs following SaveDataType to eight bytes. Common::UUID itself has
++// byte alignment, so using it directly with the automatic CMIF serializer drops seven bytes of
++// request padding and decodes the wrong account.
++struct alignas(8) SaveDataUserId {
++    Common::UUID value;
++};
++static_assert(sizeof(SaveDataUserId) == 0x10);
++static_assert(alignof(SaveDataUserId) == 8);
++
+ class IApplicationFunctions final : public ServiceFramework<IApplicationFunctions> {
+ public:
+     explicit IApplicationFunctions(Core::System& system_, std::shared_ptr<Applet> applet);
+@@ -37,9 +46,9 @@ private:
+     Result SetTerminateResult(Result terminate_result);
+     Result GetDisplayVersion(Out<DisplayVersion> out_display_version);
+     Result ExtendSaveData(Out<u64> out_required_size, FileSys::SaveDataType type,
+-                          Common::UUID user_id, u64 normal_size, u64 journal_size);
++                          SaveDataUserId user_id, u64 normal_size, u64 journal_size);
+     Result GetSaveDataSize(Out<u64> out_normal_size, Out<u64> out_journal_size,
+-                           FileSys::SaveDataType type, Common::UUID user_id);
++                           FileSys::SaveDataType type, SaveDataUserId user_id);
+     Result CreateCacheStorage(Out<u32> out_target_media, Out<u64> out_required_size, u16 index,
+                               u64 normal_size, u64 journal_size);
+     Result GetSaveDataSizeMax(Out<u64> out_max_normal_size, Out<u64> out_max_journal_size);
