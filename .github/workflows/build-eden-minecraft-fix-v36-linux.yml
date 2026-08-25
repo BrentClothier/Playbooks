@@ -68,7 +68,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Bootstrap Git
-        run: pacman -Sy --noconfirm git ca-certificates python
+        run: pacman -Sy --noconfirm git ca-certificates python patch
 
       - name: Check out Eden source
         uses: actions/checkout@v4
