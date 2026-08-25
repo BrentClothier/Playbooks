@@ -1,0 +1,309 @@
+diff --git a/src/core/hle/service/cmif_serialization.h b/src/core/hle/service/cmif_serialization.h
+index acc63f0ac..755cfa6e7 100644
+--- a/src/core/hle/service/cmif_serialization.h
++++ b/src/core/hle/service/cmif_serialization.h
+@@ -7,6 +7,7 @@
+ #pragma once
+ 
+ #include "common/div_ceil.h"
++#include "common/logging/log.h"
+ 
+ #include "core/hle/service/cmif_types.h"
+ #include "core/hle/service/ipc_helpers.h"
+@@ -471,6 +472,19 @@ void CmifReplyWrapImpl(HLERequestContext& ctx, T& t, Result (T::*f)(A...)) {
+ 
+     // Write result.
+     const RequestLayout layout = GetReplyOutLayout<MethodArguments>(is_domain);
++    const auto service_name = t.GetServiceName();
++    if (service_name == "fsp-srv" || service_name == "IFileSystem" ||
++        service_name == "ISaveDataInfoReader" || service_name == "IApplicationFunctions") {
++        const RequestLayout input_layout = GetReplyInLayout<MethodArguments>(is_domain);
++        LOG_INFO(Service,
++                 "V36_DIAG CMIF service={} command={} domain={} in_raw={:#x} out_raw={:#x} "
++                 "in_copy={} in_domain={} out_copy={} out_move={} out_domain={} result={:#x}",
++                 service_name, static_cast<u32>(ctx.GetCommand()), is_domain,
++                 input_layout.cmif_raw_data_size, layout.cmif_raw_data_size,
++                 input_layout.copy_handle_count, input_layout.domain_interface_count,
++                 layout.copy_handle_count, layout.move_handle_count, layout.domain_interface_count,
++                 res.GetInnerValue());
++    }
+     IPC::ResponseBuilder rb{ctx, 2 + Common::DivCeil(layout.cmif_raw_data_size, sizeof(u32)), layout.copy_handle_count, layout.move_handle_count + layout.domain_interface_count};
+     rb.Push(res);
+ 
+diff --git a/src/core/hle/service/filesystem/fsp/fs_i_directory.cpp b/src/core/hle/service/filesystem/fsp/fs_i_directory.cpp
+index 8483394d0..9b2e8247d 100644
+--- a/src/core/hle/service/filesystem/fsp/fs_i_directory.cpp
++++ b/src/core/hle/service/filesystem/fsp/fs_i_directory.cpp
+@@ -12,6 +12,8 @@ IDirectory::IDirectory(Core::System& system_, FileSys::VirtualDir directory_,
+                        FileSys::OpenDirectoryMode mode)
+     : ServiceFramework{system_, "IDirectory"},
+       backend(std::make_unique<FileSys::Fsa::IDirectory>(directory_, mode)) {
++    LOG_INFO(Service_FS, "V36_DIAG DirectoryOpen directory={} path={} mode={:#x}",
++             static_cast<const void*>(this), directory_->GetFullPath(), static_cast<u32>(mode));
+     static const FunctionInfo functions[] = {
+         {0, D<&IDirectory::Read>, "Read"},
+         {1, D<&IDirectory::GetEntryCount>, "GetEntryCount"},
+@@ -24,13 +26,20 @@ Result IDirectory::Read(
+     const OutArray<FileSys::DirectoryEntry, BufferAttr_HipcMapAlias> out_entries) {
+     LOG_DEBUG(Service_FS, "called.");
+ 
+-    R_RETURN(backend->Read(out_count, out_entries.data(), out_entries.size()));
++    const Result result = backend->Read(out_count, out_entries.data(), out_entries.size());
++    LOG_INFO(Service_FS, "V36_DIAG DirectoryRead directory={} capacity={} count={} result={:#x}",
++             static_cast<const void*>(this), out_entries.size(), *out_count,
++             result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ Result IDirectory::GetEntryCount(Out<s64> out_count) {
+     LOG_DEBUG(Service_FS, "called");
+ 
+-    R_RETURN(backend->GetEntryCount(out_count));
++    const Result result = backend->GetEntryCount(out_count);
++    LOG_INFO(Service_FS, "V36_DIAG DirectoryGetEntryCount directory={} count={} result={:#x}",
++             static_cast<const void*>(this), *out_count, result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ } // namespace Service::FileSystem
+diff --git a/src/core/hle/service/filesystem/fsp/fs_i_file.cpp b/src/core/hle/service/filesystem/fsp/fs_i_file.cpp
+index 22cbe2be2..4dcf71575 100644
+--- a/src/core/hle/service/filesystem/fsp/fs_i_file.cpp
++++ b/src/core/hle/service/filesystem/fsp/fs_i_file.cpp
+@@ -12,6 +12,8 @@ namespace Service::FileSystem {
+ 
+ IFile::IFile(Core::System& system_, FileSys::VirtualFile file_)
+     : ServiceFramework{system_, "IFile"}, backend{std::make_unique<FileSys::Fsa::IFile>(file_)} {
++    LOG_INFO(Service_FS, "V36_DIAG FileOpen file={} path={}", static_cast<const void*>(this),
++             file_->GetFullPath());
+     // clang-format off
+     static const FunctionInfo functions[] = {
+         {0, D<&IFile::Read>, "Read"},
+@@ -44,25 +46,38 @@ Result IFile::Write(
+     LOG_DEBUG(Service_FS, "called, option={}, offset={:#x}, length={}", option.value, offset,
+               size);
+ 
+-    R_RETURN(backend->Write(offset, buffer.data(), size, option));
++    const Result result = backend->Write(offset, buffer.data(), size, option);
++    LOG_INFO(Service_FS,
++             "V36_DIAG FileWrite file={} option={:#x} offset={:#x} size={:#x} result={:#x}",
++             static_cast<const void*>(this), option.value, offset, size, result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ Result IFile::Flush() {
+     LOG_DEBUG(Service_FS, "called");
+ 
+-    R_RETURN(backend->Flush());
++    const Result result = backend->Flush();
++    LOG_INFO(Service_FS, "V36_DIAG FileFlush file={} result={:#x}",
++             static_cast<const void*>(this), result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ Result IFile::SetSize(s64 size) {
+     LOG_DEBUG(Service_FS, "called, size={}", size);
+ 
+-    R_RETURN(backend->SetSize(size));
++    const Result result = backend->SetSize(size);
++    LOG_INFO(Service_FS, "V36_DIAG FileSetSize file={} size={:#x} result={:#x}",
++             static_cast<const void*>(this), size, result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ Result IFile::GetSize(Out<s64> out_size) {
+     LOG_DEBUG(Service_FS, "called");
+ 
+-    R_RETURN(backend->GetSize(out_size));
++    const Result result = backend->GetSize(out_size);
++    LOG_INFO(Service_FS, "V36_DIAG FileGetSize file={} size={:#x} result={:#x}",
++             static_cast<const void*>(this), *out_size, result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ } // namespace Service::FileSystem
+diff --git a/src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp b/src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp
+index 74371fd09..4f2375960 100644
+--- a/src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp
++++ b/src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp
+@@ -17,6 +17,8 @@ IFileSystem::IFileSystem(Core::System& system_, FileSys::VirtualDir dir_, SizeGe
+     : ServiceFramework{system_, "IFileSystem"}, backend{std::make_unique<FileSys::Fsa::IFileSystem>(
+                                                     dir_)},
+       size_getter{std::move(size_getter_)} {
++    LOG_INFO(Service_FS, "V36_DIAG FileSystemOpen fs={} root={}", static_cast<const void*>(this),
++             dir_->GetFullPath());
+     static const FunctionInfo functions[] = {
+         {0, D<&IFileSystem::CreateFile>, "CreateFile"},
+         {1, D<&IFileSystem::DeleteFile>, "DeleteFile"},
+@@ -43,41 +45,60 @@ Result IFileSystem::CreateFile(const InLargeData<FileSys::Sf::Path, BufferAttr_H
+                                s32 option, s64 size) {
+     LOG_DEBUG(Service_FS, "called. file={}, option={:#x}, size={:#08x}", path->str, option, size);
+ 
+-    R_RETURN(backend->CreateFile(FileSys::Path(path->str), size));
++    const Result result = backend->CreateFile(FileSys::Path(path->str), size);
++    LOG_INFO(Service_FS,
++             "V36_DIAG CreateFile fs={} path={} option={:#x} size={:#x} result={:#x}",
++             static_cast<const void*>(this), path->str, option, size, result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ Result IFileSystem::DeleteFile(const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path) {
+     LOG_DEBUG(Service_FS, "called. file={}", path->str);
+ 
+-    R_RETURN(backend->DeleteFile(FileSys::Path(path->str)));
++    const Result result = backend->DeleteFile(FileSys::Path(path->str));
++    LOG_INFO(Service_FS, "V36_DIAG DeleteFile fs={} path={} result={:#x}",
++             static_cast<const void*>(this), path->str, result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ Result IFileSystem::CreateDirectory(
+     const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path) {
+     LOG_DEBUG(Service_FS, "called. directory={}", path->str);
+ 
+-    R_RETURN(backend->CreateDirectory(FileSys::Path(path->str)));
++    const Result result = backend->CreateDirectory(FileSys::Path(path->str));
++    LOG_INFO(Service_FS, "V36_DIAG CreateDirectory fs={} path={} result={:#x}",
++             static_cast<const void*>(this), path->str, result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ Result IFileSystem::DeleteDirectory(
+     const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path) {
+     LOG_DEBUG(Service_FS, "called. directory={}", path->str);
+ 
+-    R_RETURN(backend->DeleteDirectory(FileSys::Path(path->str)));
++    const Result result = backend->DeleteDirectory(FileSys::Path(path->str));
++    LOG_INFO(Service_FS, "V36_DIAG DeleteDirectory fs={} path={} result={:#x}",
++             static_cast<const void*>(this), path->str, result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ Result IFileSystem::DeleteDirectoryRecursively(
+     const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path) {
+     LOG_DEBUG(Service_FS, "called. directory={}", path->str);
+ 
+-    R_RETURN(backend->DeleteDirectoryRecursively(FileSys::Path(path->str)));
++    const Result result = backend->DeleteDirectoryRecursively(FileSys::Path(path->str));
++    LOG_INFO(Service_FS, "V36_DIAG DeleteDirectoryRecursively fs={} path={} result={:#x}",
++             static_cast<const void*>(this), path->str, result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ Result IFileSystem::CleanDirectoryRecursively(
+     const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path) {
+     LOG_DEBUG(Service_FS, "called. Directory: {}", path->str);
+ 
+-    R_RETURN(backend->CleanDirectoryRecursively(FileSys::Path(path->str)));
++    const Result result = backend->CleanDirectoryRecursively(FileSys::Path(path->str));
++    LOG_INFO(Service_FS, "V36_DIAG CleanDirectoryRecursively fs={} path={} result={:#x}",
++             static_cast<const void*>(this), path->str, result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ Result IFileSystem::RenameFile(
+@@ -85,7 +106,12 @@ Result IFileSystem::RenameFile(
+     const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> new_path) {
+     LOG_DEBUG(Service_FS, "called. file '{}' to file '{}'", old_path->str, new_path->str);
+ 
+-    R_RETURN(backend->RenameFile(FileSys::Path(old_path->str), FileSys::Path(new_path->str)));
++    const Result result =
++        backend->RenameFile(FileSys::Path(old_path->str), FileSys::Path(new_path->str));
++    LOG_INFO(Service_FS, "V36_DIAG RenameFile fs={} old={} new={} result={:#x}",
++             static_cast<const void*>(this), old_path->str, new_path->str,
++             result.GetInnerValue());
++    R_RETURN(result);
+ }
+ 
+ Result IFileSystem::OpenFile(OutInterface<IFile> out_interface,
+@@ -94,8 +120,11 @@ Result IFileSystem::OpenFile(OutInterface<IFile> out_interface,
+     LOG_DEBUG(Service_FS, "called. file={}, mode={}", path->str, mode);
+ 
+     FileSys::VirtualFile vfs_file{};
+-    R_TRY(backend->OpenFile(&vfs_file, FileSys::Path(path->str),
+-                            static_cast<FileSys::OpenMode>(mode)));
++    const Result result = backend->OpenFile(&vfs_file, FileSys::Path(path->str),
++                                            static_cast<FileSys::OpenMode>(mode));
++    LOG_INFO(Service_FS, "V36_DIAG OpenFile fs={} path={} mode={:#x} result={:#x}",
++             static_cast<const void*>(this), path->str, mode, result.GetInnerValue());
++    R_TRY(result);
+ 
+     *out_interface = std::make_shared<IFile>(system, vfs_file);
+     R_SUCCEED();
+@@ -107,8 +136,11 @@ Result IFileSystem::OpenDirectory(OutInterface<IDirectory> out_interface,
+     LOG_DEBUG(Service_FS, "called. directory={}, mode={}", path->str, mode);
+ 
+     FileSys::VirtualDir vfs_dir{};
+-    R_TRY(backend->OpenDirectory(&vfs_dir, FileSys::Path(path->str),
+-                                 static_cast<FileSys::OpenDirectoryMode>(mode)));
++    const Result result = backend->OpenDirectory(&vfs_dir, FileSys::Path(path->str),
++                                                 static_cast<FileSys::OpenDirectoryMode>(mode));
++    LOG_INFO(Service_FS, "V36_DIAG OpenDirectory fs={} path={} mode={:#x} result={:#x}",
++             static_cast<const void*>(this), path->str, mode, result.GetInnerValue());
++    R_TRY(result);
+ 
+     *out_interface = std::make_shared<IDirectory>(system, vfs_dir,
+                                                   static_cast<FileSys::OpenDirectoryMode>(mode));
+@@ -120,7 +152,11 @@ Result IFileSystem::GetEntryType(
+     LOG_DEBUG(Service_FS, "called. file={}", path->str);
+ 
+     FileSys::DirectoryEntryType vfs_entry_type{};
+-    R_TRY(backend->GetEntryType(&vfs_entry_type, FileSys::Path(path->str)));
++    const Result result = backend->GetEntryType(&vfs_entry_type, FileSys::Path(path->str));
++    LOG_INFO(Service_FS, "V36_DIAG GetEntryType fs={} path={} type={} result={:#x}",
++             static_cast<const void*>(this), path->str, static_cast<u32>(vfs_entry_type),
++             result.GetInnerValue());
++    R_TRY(result);
+ 
+     *out_type = static_cast<u32>(vfs_entry_type);
+     R_SUCCEED();
+@@ -128,6 +164,7 @@ Result IFileSystem::GetEntryType(
+ 
+ Result IFileSystem::Commit() {
+     LOG_WARNING(Service_FS, "(STUBBED) called");
++    LOG_INFO(Service_FS, "V36_DIAG Commit fs={} result=0x0", static_cast<const void*>(this));
+ 
+     R_SUCCEED();
+ }
+@@ -135,14 +172,16 @@ Result IFileSystem::Commit() {
+ Result IFileSystem::GetFreeSpaceSize(
+     Out<s64> out_size, const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path) {
+     *out_size = size_getter.get_free_size();
+-    LOG_INFO(Service_FS, "V34_DIAG GetFreeSpaceSize path={} size={:#x}", path->str, *out_size);
++    LOG_INFO(Service_FS, "V34_DIAG GetFreeSpaceSize fs={} path={} size={:#x}",
++             static_cast<const void*>(this), path->str, *out_size);
+     R_SUCCEED();
+ }
+ 
+ Result IFileSystem::GetTotalSpaceSize(
+     Out<s64> out_size, const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path) {
+     *out_size = size_getter.get_total_size();
+-    LOG_INFO(Service_FS, "V34_DIAG GetTotalSpaceSize path={} size={:#x}", path->str, *out_size);
++    LOG_INFO(Service_FS, "V34_DIAG GetTotalSpaceSize fs={} path={} size={:#x}",
++             static_cast<const void*>(this), path->str, *out_size);
+     R_SUCCEED();
+ }
+ 
+@@ -152,7 +191,11 @@ Result IFileSystem::GetFileTimeStampRaw(
+     LOG_DEBUG(Service_FS, "(Partial Implementation) called. file={}", path->str);
+ 
+     FileSys::FileTimeStampRaw vfs_timestamp{};
+-    R_TRY(backend->GetFileTimeStampRaw(&vfs_timestamp, FileSys::Path(path->str)));
++    const Result result =
++        backend->GetFileTimeStampRaw(&vfs_timestamp, FileSys::Path(path->str));
++    LOG_INFO(Service_FS, "V36_DIAG GetFileTimeStampRaw fs={} path={} result={:#x}",
++             static_cast<const void*>(this), path->str, result.GetInnerValue());
++    R_TRY(result);
+ 
+     *out_timestamp = vfs_timestamp;
+     R_SUCCEED();
+@@ -199,6 +242,9 @@ Result IFileSystem::GetFileSystemAttribute(Out<FileSys::FileSystemAttribute> out
+     savedata_attribute.utf16_file_path_name_length_max = kPathLengthMax;
+ 
+     *out_attribute = savedata_attribute;
++    LOG_INFO(Service_FS,
++             "V36_DIAG GetFileSystemAttribute fs={} name_max={:#x} path_max={:#x} result=0x0",
++             static_cast<const void*>(this), kEntryNameLengthMax, kPathLengthMax);
+     R_SUCCEED();
+ }
+ 
