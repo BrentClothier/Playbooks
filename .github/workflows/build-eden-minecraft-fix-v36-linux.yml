@@ -35,6 +35,7 @@ on:
       - "eden-fix/v35-linux-save-data-uuid.patch"
       - "eden-fix/apply-v36-linux-filesystem-trace.py"
       - "eden-fix/v36-linux-filesystem-trace.patch"
+      - "eden-fix/v36-overlay/**"
   workflow_dispatch:
 
 permissions:
@@ -68,7 +69,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Bootstrap Git
-        run: pacman -Sy --noconfirm git ca-certificates python patch
+        run: pacman -Sy --noconfirm git ca-certificates python
 
       - name: Check out Eden source
         uses: actions/checkout@v4
@@ -97,10 +98,9 @@ jobs:
           done
           for script in apply-v31-linux-storage.py apply-v32-linux-cache-size.py \
                         apply-v33-linux-cache-reader.py apply-v34-linux-save-space-diag.py \
-                        apply-v35-linux-save-data-uuid.py apply-v36-linux-filesystem-trace.py; do
+                        apply-v35-linux-save-data-uuid.py; do
             cp "eden-fix/${script}" "eden-src/${script}"
           done
-          cp eden-fix/v36-linux-filesystem-trace.patch eden-src/
           cd eden-src
           for v in 7 9 11 12 14b 15 16 17 18b 18c 19 20 21 22b 23b 24 25 26 27 29 30; do
             python "apply-v${v}.py"
@@ -110,9 +110,10 @@ jobs:
           python apply-v33-linux-cache-reader.py
           python apply-v34-linux-save-space-diag.py
           python apply-v35-linux-save-data-uuid.py
-          python apply-v36-linux-filesystem-trace.py
-          git diff --check
-          git diff --stat
+          cd ..
+          python eden-fix/apply-v36-linux-filesystem-trace.py eden-src
+          git -C eden-src diff --check
+          git -C eden-src diff --stat
 
       - name: Archive source
         run: tar --exclude=.git -C eden-src -cJf Eden-minecraft-linux-filesystem-trace-v36-source.tar.xz .
@@ -166,6 +167,7 @@ jobs:
           cp eden-fix/apply-v33-linux-cache-reader.py eden-fix/apply-v34-linux-save-space-diag.py release/
           cp eden-fix/apply-v35-linux-save-data-uuid.py release/
           cp eden-fix/apply-v36-linux-filesystem-trace.py eden-fix/v36-linux-filesystem-trace.patch release/
+          tar -C eden-fix -cJf release/v36-filesystem-trace-overlay.tar.xz v36-overlay
           cp eden-fix/v33-linux-cache-reader.patch eden-fix/v34-linux-save-space-diag.patch release/
           cp eden-fix/v35-linux-save-data-uuid.patch release/
           (cd release && sha256sum * > SHA256SUMS.txt)
