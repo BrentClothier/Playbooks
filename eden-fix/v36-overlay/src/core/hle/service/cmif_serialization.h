@@ -7,7 +7,7 @@
 #pragma once
 
 #include "common/div_ceil.h"
-#include "common/logging/log.h"
+#include "common/logging.h"
 
 #include "core/hle/service/cmif_types.h"
 #include "core/hle/service/ipc_helpers.h"
