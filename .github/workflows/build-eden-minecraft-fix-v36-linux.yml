@@ -158,6 +158,13 @@ jobs:
             diagnostic="Build exited nonzero without an allowlisted compiler diagnostic line."
           fi
           echo "::error title=Eden v36 build failed::${diagnostic}"
+          {
+            echo "### Eden v36 compiler diagnostics"
+            echo
+            echo "<pre>"
+            printf '%s\n' "$diagnostic"
+            echo "</pre>"
+          } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
       - name: Package AppImage
