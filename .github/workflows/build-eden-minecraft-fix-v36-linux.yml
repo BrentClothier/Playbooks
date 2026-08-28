@@ -153,13 +153,13 @@ jobs:
           if cmake --build build --parallel "$(nproc)" 2>&1 | tee ../build-v36.log; then
             exit 0
           fi
-          diagnostic="$(grep -Ei -m 40 'fatal error:|error:|undefined reference|collect2: error' \
-            ../build-v36.log | tail -n 40 || true)"
+          diagnostic="$(grep -Ei -m 40 'fatal error:|error:|undefined reference|collect2: error' ../build-v36.log | tail -n 40 | tr '\\r\\n' '  ' | sed 's/%/%25/g' || true)"
           if [ -z "$diagnostic" ]; then
             diagnostic="Build exited nonzero without an allowlisted compiler diagnostic line."
           fi
-          diagnostic="${diagnostic//'%'/'%25'}"
-          diagnostic="${diagnostic//
+          echo "::error title=Eden v36 build failed::${diagnostic}"
+          exit 1
+
       - name: Package AppImage
         working-directory: eden-src
         run: ./.ci/package/linux.sh
