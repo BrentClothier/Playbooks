@@ -147,7 +147,116 @@ jobs:
 
       - name: Build
         working-directory: eden-src
-        run: cmake --build build --parallel "$(nproc)"
+        shell: bash
+        run: |
+          set -o pipefail
+          if cmake --build build --parallel "$(nproc)" 2>&1 | tee ../build-v36.log; then
+            exit 0
+          fi
+          diagnostic="$(grep -Ei -m 40 'fatal error:|error:|undefined reference|collect2: error' \
+            ../build-v36.log | tail -n 40 || true)"
+          if [ -z "$diagnostic" ]; then
+            diagnostic="Build exited nonzero without an allowlisted compiler diagnostic line."
+          fi
+          diagnostic="${diagnostic//'%'/'%25'}"
+          diagnostic="${diagnostic//
+      - name: Package AppImage
+        working-directory: eden-src
+        run: ./.ci/package/linux.sh
+
+      - name: Prepare release
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release
+          cp eden-src/artifacts/*.AppImage release/Eden-Linux-minecraft-filesystem-trace-v36-amd64-gcc-standard.AppImage
+          cp Eden-minecraft-linux-filesystem-trace-v36-source.tar.xz release/
+          for v in 7 9 11 12 14b 15 16 17 18b 18c 19 20 21 22b 23b 24 25 26 27 29 30; do
+            cp "eden-fix/apply-v${v}.py" release/
+          done
+          cp eden-fix/apply-v31-linux-storage.py eden-fix/apply-v32-linux-cache-size.py release/
+          cp eden-fix/apply-v33-linux-cache-reader.py eden-fix/apply-v34-linux-save-space-diag.py release/
+          cp eden-fix/apply-v35-linux-save-data-uuid.py release/
+          cp eden-fix/apply-v36-linux-filesystem-trace.py eden-fix/v36-linux-filesystem-trace.patch release/
+          tar -C eden-fix -cJf release/v36-filesystem-trace-overlay.tar.xz v36-overlay
+          cp eden-fix/v33-linux-cache-reader.patch eden-fix/v34-linux-save-space-diag.patch release/
+          cp eden-fix/v35-linux-save-data-uuid.patch release/
+          (cd release && sha256sum * > SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Minecraft-Linux-filesystem-trace-v36
+          path: release/*
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: eden-minecraft-linux-filesystem-trace-v36-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Eden Minecraft Linux filesystem trace v36 #${{ github.run_number }}
+          prerelease: true
+          body: |
+            Linux test build based on Eden commit `${{ env.EDEN_COMMIT }}`.
+
+            This applies the exact working v30 graphics stack and every unchanged v31-v35
+            storage/save fix. V36 is diagnostics-only: it traces filesystem objects, paths,
+            metadata/mutation results, file writes, directory enumeration, and selected CMIF
+            layouts while deliberately omitting high-volume file reads.
+
+            Reproduce the world-creation failure once, close Eden, and send the log containing
+            `V36_DIAG` lines. Back up saves before testing.
+          files: release/*
+\r'/'%0D'}"
+          diagnostic="${diagnostic//
+      - name: Package AppImage
+        working-directory: eden-src
+        run: ./.ci/package/linux.sh
+
+      - name: Prepare release
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release
+          cp eden-src/artifacts/*.AppImage release/Eden-Linux-minecraft-filesystem-trace-v36-amd64-gcc-standard.AppImage
+          cp Eden-minecraft-linux-filesystem-trace-v36-source.tar.xz release/
+          for v in 7 9 11 12 14b 15 16 17 18b 18c 19 20 21 22b 23b 24 25 26 27 29 30; do
+            cp "eden-fix/apply-v${v}.py" release/
+          done
+          cp eden-fix/apply-v31-linux-storage.py eden-fix/apply-v32-linux-cache-size.py release/
+          cp eden-fix/apply-v33-linux-cache-reader.py eden-fix/apply-v34-linux-save-space-diag.py release/
+          cp eden-fix/apply-v35-linux-save-data-uuid.py release/
+          cp eden-fix/apply-v36-linux-filesystem-trace.py eden-fix/v36-linux-filesystem-trace.patch release/
+          tar -C eden-fix -cJf release/v36-filesystem-trace-overlay.tar.xz v36-overlay
+          cp eden-fix/v33-linux-cache-reader.patch eden-fix/v34-linux-save-space-diag.patch release/
+          cp eden-fix/v35-linux-save-data-uuid.patch release/
+          (cd release && sha256sum * > SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Minecraft-Linux-filesystem-trace-v36
+          path: release/*
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: eden-minecraft-linux-filesystem-trace-v36-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Eden Minecraft Linux filesystem trace v36 #${{ github.run_number }}
+          prerelease: true
+          body: |
+            Linux test build based on Eden commit `${{ env.EDEN_COMMIT }}`.
+
+            This applies the exact working v30 graphics stack and every unchanged v31-v35
+            storage/save fix. V36 is diagnostics-only: it traces filesystem objects, paths,
+            metadata/mutation results, file writes, directory enumeration, and selected CMIF
+            layouts while deliberately omitting high-volume file reads.
+
+            Reproduce the world-creation failure once, close Eden, and send the log containing
+            `V36_DIAG` lines. Back up saves before testing.
+          files: release/*
+\n'/'%0A'}"
+          echo "::error title=Eden v36 build failed::${diagnostic}"
+          exit 1
 
       - name: Package AppImage
         working-directory: eden-src
