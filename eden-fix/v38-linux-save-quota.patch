@@ -1,0 +1,54 @@
+diff --git a/src/core/hle/service/filesystem/fsp/fsp_types.h b/src/core/hle/service/filesystem/fsp/fsp_types.h
+--- a/src/core/hle/service/filesystem/fsp/fsp_types.h
++++ b/src/core/hle/service/filesystem/fsp/fsp_types.h
+@@ -29,6 +29,20 @@ struct SizeGetter {
+             [&fsc, id] { return fsc.GetTotalSpaceSize(id); },
+         };
+     }
++
++    static SizeGetter FromSaveData(const FileSystemController& fsc, FileSys::StorageId id,
++                                   FileSys::VirtualDir dir, u64 total_size) {
++        return {
++            [&fsc, id, dir, total_size] {
++                const u64 used_size = dir->GetSize();
++                const u64 quota_free_size =
++                    used_size < total_size ? total_size - used_size : 0;
++                const u64 storage_free_size = fsc.GetFreeSpaceSize(id);
++                return quota_free_size < storage_free_size ? quota_free_size : storage_free_size;
++            },
++            [total_size] { return total_size; },
++        };
++    }
+ };
+ 
+ } // namespace Service::FileSystem
+diff --git a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+--- a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
++++ b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+@@ -305,8 +305,25 @@ Result FSP_SRV::OpenSaveDataFileSystem(OutInterface<IFileSystem> out_interface,
+         break;
+     }
+ 
++    auto size_getter = SizeGetter::FromStorageId(fsc, id);
++    if (space_id == FileSys::SaveDataSpaceId::User) {
++        const auto allocation = save_data_controller->ReadSaveDataSize(
++            attribute.type, attribute.program_id, attribute.user_id);
++        if (allocation.normal != 0) {
++            const u64 used_size = dir->GetSize();
++            const u64 quota_free_size =
++                used_size < allocation.normal ? allocation.normal - used_size : 0;
++            LOG_INFO(Service_FS,
++                     "V38_FIX SaveDataCapacity type={:02X} program_id={:016X} total={:#x} "
++                     "used={:#x} free={:#x}",
++                     static_cast<u8>(attribute.type), attribute.program_id, allocation.normal,
++                     used_size, quota_free_size);
++            size_getter = SizeGetter::FromSaveData(fsc, id, dir, allocation.normal);
++        }
++    }
++
+     *out_interface =
+-        std::make_shared<IFileSystem>(system, std::move(dir), SizeGetter::FromStorageId(fsc, id));
++        std::make_shared<IFileSystem>(system, std::move(dir), std::move(size_getter));
+ 
+     R_SUCCEED();
+ }
