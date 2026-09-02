@@ -1,0 +1,21 @@
+diff --git a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+--- a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
++++ b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+@@ -266,8 +266,15 @@ Result FSP_SRV::IsExFatSupported(Out<bool> out_is_supported) {
+ Result FSP_SRV::OpenSaveDataFileSystem(OutInterface<IFileSystem> out_interface,
+                                        FileSys::SaveDataSpaceId space_id,
+                                        FileSys::SaveDataAttribute attribute) {
+-    LOG_INFO(Service_FS, "V34_DIAG OpenSaveDataFileSystem space_id={:02X} attribute={}",
+-             space_id, attribute.DebugInfo());
++    const u64 requested_program_id = attribute.program_id;
++    if (attribute.program_id == 0) {
++        attribute.program_id = program_id;
++    }
++
++    LOG_INFO(Service_FS,
++             "V37_FIX OpenSaveDataFileSystem space_id={:02X} requested_program_id={:016X} "
++             "resolved_program_id={:016X} attribute={}",
++             space_id, requested_program_id, attribute.program_id, attribute.DebugInfo());
+ 
+     FileSys::VirtualDir dir{};
+     R_TRY(save_data_controller->OpenSaveData(&dir, space_id, attribute));
