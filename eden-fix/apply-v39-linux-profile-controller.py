@@ -56,7 +56,7 @@ replace_once(
     navigation_cpp,
     """#include "common/settings_input.h"
 """,
-    """#include "common/logging.h"
+    """#include "common/logging/log.h"
 #include "common/settings_input.h"
 """,
     "add profile-navigation diagnostics logging",
@@ -221,7 +221,7 @@ replace_once(
 #include "common/string_util.h"
 """,
     """#include "common/fs/path_util.h"
-#include "common/logging.h"
+#include "common/logging/log.h"
 #include "common/string_util.h"
 """,
     "add profile-selector diagnostics logging",
@@ -384,6 +384,63 @@ replace_once(
     emit ProfileSelectorFinishedSelection(uuid);
 """,
     "return the selected row's UUID without re-indexing the sorted profile list",
+)
+
+util_cpp = Path("src/yuzu/util/util.cpp")
+replace_once(
+    util_cpp,
+    """    const auto select_profile = [] {
+        const Core::Frontend::ProfileSelectParameters parameters{
+            .mode = Service::AM::Frontend::UiMode::UserSelector,
+            .invalid_uid_list = {},
+            .display_options = {},
+            .purpose = Service::AM::Frontend::UserSelectionPurpose::General,
+        };
+        QtProfileSelectionDialog dialog(*QtCommon::system, QtCommon::rootObject, parameters);
+        dialog.setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
+                              Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint);
+        dialog.setWindowModality(Qt::WindowModal);
+
+        if (dialog.exec() == QDialog::Rejected) {
+            return -1;
+        }
+
+        return dialog.GetIndex();
+    };
+
+    const auto index = select_profile();
+    if (index == -1) {
+        return std::nullopt;
+    }
+
+    const auto uuid =
+        QtCommon::system->GetProfileManager().GetUser(static_cast<std::size_t>(index));
+    ASSERT(uuid);
+
+    return uuid;
+""",
+    """    const auto select_profile = [] -> std::optional<Common::UUID> {
+        const Core::Frontend::ProfileSelectParameters parameters{
+            .mode = Service::AM::Frontend::UiMode::UserSelector,
+            .invalid_uid_list = {},
+            .display_options = {},
+            .purpose = Service::AM::Frontend::UserSelectionPurpose::General,
+        };
+        QtProfileSelectionDialog dialog(*QtCommon::system, QtCommon::rootObject, parameters);
+        dialog.setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
+                              Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint);
+        dialog.setWindowModality(Qt::WindowModal);
+
+        if (dialog.exec() == QDialog::Rejected) {
+            return std::nullopt;
+        }
+
+        return dialog.GetUUID();
+    };
+
+    return select_profile();
+""",
+    "use the selected UUID in the general profile utility",
 )
 
 print("applied v39 Linux Player 2 profile-selector fix")
