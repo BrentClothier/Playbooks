@@ -1,0 +1,304 @@
+diff --git a/src/yuzu/applets/qt_profile_select.cpp b/src/yuzu/applets/qt_profile_select.cpp
+index ace6be4d3..a6db34e38 100644
+--- a/src/yuzu/applets/qt_profile_select.cpp
++++ b/src/yuzu/applets/qt_profile_select.cpp
+@@ -4,6 +4,7 @@
+ // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#include <algorithm>
+ #include <mutex>
+ #include <QApplication>
+ #include <QDialogButtonBox>
+@@ -15,6 +16,7 @@
+ #include <QTreeView>
+ #include <QVBoxLayout>
+ #include "common/fs/path_util.h"
++#include "common/logging/log.h"
+ #include "common/string_util.h"
+ #include "core/constants.h"
+ #include "core/core.h"
+@@ -73,7 +75,7 @@ QtProfileSelectionDialog::QtProfileSelectionDialog(
+     tree_view = new QTreeView;
+     item_model = new QStandardItemModel(tree_view);
+     tree_view->setModel(item_model);
+-    controller_navigation = new ControllerNavigation(system.HIDCore(), this);
++    controller_navigation = new ControllerNavigation(system.HIDCore(), this, true);
+ 
+     tree_view->setAlternatingRowColors(true);
+     tree_view->setSelectionMode(QHeaderView::SingleSelection);
+@@ -111,6 +113,14 @@ QtProfileSelectionDialog::QtProfileSelectionDialog(
+ 
+     const auto& profiles = profile_manager.GetAllUsers();
+     for (const auto& user : profiles) {
++        const bool is_invalid = std::find(parameters.invalid_uid_list.begin(),
++                                          parameters.invalid_uid_list.end(),
++                                          user) != parameters.invalid_uid_list.end();
++        if (is_invalid) {
++            LOG_INFO(Frontend, "V39_FIX ProfileFiltered uuid={}", user.FormattedString());
++            continue;
++        }
++
+         Service::Account::ProfileBase profile{};
+         if (!profile_manager.GetProfileBase(user, profile))
+             continue;
+@@ -118,13 +128,22 @@ QtProfileSelectionDialog::QtProfileSelectionDialog(
+         const auto username = Common::StringFromFixedZeroTerminatedBuffer(
+             reinterpret_cast<const char*>(profile.username.data()), profile.username.size());
+ 
+-        list_items.push_back(QList<QStandardItem*>{new QStandardItem{
+-            GetIcon(user), FormatUserEntryText(QString::fromStdString(username), user)}});
++        auto* item = new QStandardItem{
++            GetIcon(user), FormatUserEntryText(QString::fromStdString(username), user)};
++        item->setData(QString::fromStdString(user.RawString()), Qt::UserRole);
++        list_items.push_back(QList<QStandardItem*>{item});
++        LOG_INFO(Frontend, "V39_FIX ProfileVisible uuid={}", user.FormattedString());
+     }
+ 
+     for (const auto& item : list_items)
+         item_model->appendRow(item);
+ 
++    if (item_model->rowCount() > 0) {
++        const auto first_index = item_model->index(0, 0);
++        tree_view->setCurrentIndex(first_index);
++        SelectUser(first_index);
++    }
++
+     SetWindowTitle(parameters);
+     SetDialogPurpose(parameters);
+     resize(550, 400);
+@@ -135,29 +154,47 @@ QtProfileSelectionDialog::~QtProfileSelectionDialog() {
+ };
+ 
+ int QtProfileSelectionDialog::exec() {
+-    // Skip profile selection when there's only one.
+-    if (profile_manager.GetUserCount() == 1) {
+-        user_index = 0;
++    // Skip profile selection when there's exactly one valid choice.
++    if (item_model->rowCount() == 1 && selected_user.has_value()) {
++        LOG_INFO(Frontend, "V39_FIX ProfileAutoSelect uuid={}",
++                 selected_user->FormattedString());
+         return QDialog::Accepted;
+     }
++    if (item_model->rowCount() == 0) {
++        LOG_WARNING(Frontend, "V39_FIX ProfileSelect has no valid users");
++        return QDialog::Rejected;
++    }
+     return QDialog::exec();
+ }
+ 
+ void QtProfileSelectionDialog::accept() {
++    if (!selected_user.has_value()) {
++        return;
++    }
++    LOG_INFO(Frontend, "V39_FIX ProfileAccepted uuid={}", selected_user->FormattedString());
+     QDialog::accept();
+ }
+ 
+ void QtProfileSelectionDialog::reject() {
+-    user_index = 0;
++    selected_user.reset();
+     QDialog::reject();
+ }
+ 
+-int QtProfileSelectionDialog::GetIndex() const {
+-    return user_index;
++std::optional<Common::UUID> QtProfileSelectionDialog::GetUUID() const {
++    return selected_user;
+ }
+ 
+ void QtProfileSelectionDialog::SelectUser(const QModelIndex& index) {
+-    user_index = index.row();
++    if (!index.isValid()) {
++        selected_user.reset();
++        return;
++    }
++
++    const auto* item = item_model->itemFromIndex(index);
++    const auto raw_uuid = item->data(Qt::UserRole).toString().toStdString();
++    selected_user = Common::UUID{raw_uuid};
++    LOG_INFO(Frontend, "V39_FIX ProfileHighlighted row={} uuid={}", index.row(),
++             selected_user->FormattedString());
+ }
+ 
+ void QtProfileSelectionDialog::SetWindowTitle(
+diff --git a/src/yuzu/applets/qt_profile_select.h b/src/yuzu/applets/qt_profile_select.h
+index 23903b626..2af0d5cde 100644
+--- a/src/yuzu/applets/qt_profile_select.h
++++ b/src/yuzu/applets/qt_profile_select.h
+@@ -42,7 +42,7 @@ public:
+     void accept() override;
+     void reject() override;
+ 
+-    int GetIndex() const;
++    std::optional<Common::UUID> GetUUID() const;
+ 
+ private:
+     void SelectUser(const QModelIndex& index);
+@@ -50,7 +50,7 @@ private:
+     void SetWindowTitle(const Core::Frontend::ProfileSelectParameters& parameters);
+     void SetDialogPurpose(const Core::Frontend::ProfileSelectParameters& parameters);
+ 
+-    int user_index = 0;
++    std::optional<Common::UUID> selected_user;
+ 
+     QVBoxLayout* layout;
+     QTreeView* tree_view;
+diff --git a/src/yuzu/main_window.cpp b/src/yuzu/main_window.cpp
+index 9b6b0a8b6..de59e5f37 100644
+--- a/src/yuzu/main_window.cpp
++++ b/src/yuzu/main_window.cpp
+@@ -675,13 +675,13 @@ void MainWindow::ProfileSelectorSelectProfile(
+         return;
+     }
+ 
+-    const auto uuid = QtCommon::system->GetProfileManager().GetUser(
+-        static_cast<std::size_t>(profile_select_applet->GetIndex()));
++    const auto uuid = profile_select_applet->GetUUID();
+     if (!uuid.has_value()) {
+         emit ProfileSelectorFinishedSelection(std::nullopt);
+         return;
+     }
+ 
++    LOG_INFO(Frontend, "V39_FIX ProfileSelectorFinished uuid={}", uuid->FormattedString());
+     emit ProfileSelectorFinishedSelection(uuid);
+ }
+ 
+diff --git a/src/yuzu/util/controller_navigation.cpp b/src/yuzu/util/controller_navigation.cpp
+index 0dbfca243..3aedc76f6 100644
+--- a/src/yuzu/util/controller_navigation.cpp
++++ b/src/yuzu/util/controller_navigation.cpp
+@@ -1,21 +1,39 @@
+ // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#include "common/logging/log.h"
+ #include "common/settings_input.h"
+ #include "hid_core/frontend/emulated_controller.h"
+ #include "hid_core/hid_core.h"
+ #include "yuzu/util/controller_navigation.h"
+ 
+-ControllerNavigation::ControllerNavigation(Core::HID::HIDCore& hid_core, QWidget* parent) {
++ControllerNavigation::ControllerNavigation(Core::HID::HIDCore& hid_core, QWidget* parent,
++                                           bool enable_player2)
++    : is_player2_enabled{enable_player2} {
+     player1_controller = hid_core.GetEmulatedController(Core::HID::NpadIdType::Player1);
++    player2_controller = hid_core.GetEmulatedController(Core::HID::NpadIdType::Player2);
+     handheld_controller = hid_core.GetEmulatedController(Core::HID::NpadIdType::Handheld);
+     Core::HID::ControllerUpdateCallback engine_callback{
+         .on_change = [this](Core::HID::ControllerTriggerType type) { ControllerUpdateEvent(type); },
+         .is_npad_service = false,
+     };
+     player1_callback_key = player1_controller->SetCallback(engine_callback);
++    if (is_player2_enabled) {
++        player2_callback_key = player2_controller->SetCallback(engine_callback);
++    }
+     handheld_callback_key = handheld_controller->SetCallback(engine_callback);
+     is_controller_set = true;
++
++    if (is_player2_enabled) {
++        LOG_INFO(Frontend,
++                 "V39_FIX ProfileNavigation p1_connected={} p1_style={} p2_connected={} "
++                 "p2_style={} handheld_connected={}",
++                 player1_controller->IsConnected(),
++                 static_cast<u32>(player1_controller->GetNpadStyleIndex()),
++                 player2_controller->IsConnected(),
++                 static_cast<u32>(player2_controller->GetNpadStyleIndex()),
++                 handheld_controller->IsConnected());
++    }
+ }
+ 
+ ControllerNavigation::~ControllerNavigation() {
+@@ -25,6 +43,9 @@ ControllerNavigation::~ControllerNavigation() {
+ void ControllerNavigation::UnloadController() {
+     if (is_controller_set) {
+         player1_controller->DeleteCallback(player1_callback_key);
++        if (is_player2_enabled) {
++            player2_controller->DeleteCallback(player2_callback_key);
++        }
+         handheld_controller->DeleteCallback(handheld_callback_key);
+         is_controller_set = false;
+     }
+@@ -54,12 +75,19 @@ void ControllerNavigation::ControllerUpdateEvent(Core::HID::ControllerTriggerTyp
+ }
+ 
+ void ControllerNavigation::ControllerUpdateButton() {
+-    const auto controller_type = player1_controller->GetNpadStyleIndex();
++    const auto controller_type =
++        player1_controller->IsConnected()
++            ? player1_controller->GetNpadStyleIndex()
++            : (is_player2_enabled && player2_controller->IsConnected()
++                   ? player2_controller->GetNpadStyleIndex()
++                   : handheld_controller->GetNpadStyleIndex());
+     const auto& player1_buttons = player1_controller->GetButtonsValues();
++    const auto& player2_buttons = player2_controller->GetButtonsValues();
+     const auto& handheld_buttons = handheld_controller->GetButtonsValues();
+ 
+     for (std::size_t i = 0; i < player1_buttons.size(); ++i) {
+-        const bool button = player1_buttons[i].value || handheld_buttons[i].value;
++        const bool button = player1_buttons[i].value || handheld_buttons[i].value ||
++                            (is_player2_enabled && player2_buttons[i].value);
+         // Trigger only once
+         button_values[i].locked = button == button_values[i].value;
+         button_values[i].value = button;
+@@ -91,17 +119,27 @@ void ControllerNavigation::ControllerUpdateButton() {
+ }
+ 
+ void ControllerNavigation::ControllerUpdateStick() {
+-    const auto controller_type = player1_controller->GetNpadStyleIndex();
++    const auto controller_type =
++        player1_controller->IsConnected()
++            ? player1_controller->GetNpadStyleIndex()
++            : (is_player2_enabled && player2_controller->IsConnected()
++                   ? player2_controller->GetNpadStyleIndex()
++                   : handheld_controller->GetNpadStyleIndex());
+     const auto& player1_sticks = player1_controller->GetSticksValues();
+-    const auto& handheld_sticks = player1_controller->GetSticksValues();
++    const auto& player2_sticks = player2_controller->GetSticksValues();
++    const auto& handheld_sticks = handheld_controller->GetSticksValues();
+     bool update = false;
+ 
+     for (std::size_t i = 0; i < player1_sticks.size(); ++i) {
+         const Common::Input::StickStatus stick{
+-            .left = player1_sticks[i].left || handheld_sticks[i].left,
+-            .right = player1_sticks[i].right || handheld_sticks[i].right,
+-            .up = player1_sticks[i].up || handheld_sticks[i].up,
+-            .down = player1_sticks[i].down || handheld_sticks[i].down,
++            .left = player1_sticks[i].left || handheld_sticks[i].left ||
++                    (is_player2_enabled && player2_sticks[i].left),
++            .right = player1_sticks[i].right || handheld_sticks[i].right ||
++                     (is_player2_enabled && player2_sticks[i].right),
++            .up = player1_sticks[i].up || handheld_sticks[i].up ||
++                  (is_player2_enabled && player2_sticks[i].up),
++            .down = player1_sticks[i].down || handheld_sticks[i].down ||
++                    (is_player2_enabled && player2_sticks[i].down),
+         };
+         // Trigger only once
+         if (stick.down != stick_values[i].down || stick.left != stick_values[i].left ||
+diff --git a/src/yuzu/util/controller_navigation.h b/src/yuzu/util/controller_navigation.h
+index 86e210368..78d50f57b 100644
+--- a/src/yuzu/util/controller_navigation.h
++++ b/src/yuzu/util/controller_navigation.h
+@@ -21,7 +21,8 @@ class ControllerNavigation : public QObject {
+     Q_OBJECT
+ 
+ public:
+-    explicit ControllerNavigation(Core::HID::HIDCore& hid_core, QWidget* parent = nullptr);
++    explicit ControllerNavigation(Core::HID::HIDCore& hid_core, QWidget* parent = nullptr,
++                                  bool enable_player2 = false);
+     ~ControllerNavigation();
+ 
+     /// Disables events from the emulated controller
+@@ -42,9 +43,12 @@ private:
+     Core::HID::SticksValues stick_values{};
+ 
+     int player1_callback_key{};
++    int player2_callback_key{};
+     int handheld_callback_key{};
+     bool is_controller_set{};
++    bool is_player2_enabled{};
+     mutable std::mutex mutex;
+     Core::HID::EmulatedController* player1_controller;
++    Core::HID::EmulatedController* player2_controller{};
+     Core::HID::EmulatedController* handheld_controller;
+ };
