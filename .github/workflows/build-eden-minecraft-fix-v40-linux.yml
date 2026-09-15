@@ -46,6 +46,7 @@ on:
       - "eden-fix/v39-linux-profile-controller.patch"
       - "eden-fix/apply-v40-linux-additional-user.py"
       - "eden-fix/v40-linux-additional-user.patch"
+      - "eden-fix/v40-trigger/**"
   workflow_dispatch:
 
 permissions:
