@@ -56,7 +56,7 @@ replace_once(
     navigation_cpp,
     """#include "common/settings_input.h"
 """,
-    """#include "common/logging/log.h"
+    """#include "common/logging.h"
 #include "common/settings_input.h"
 """,
     "add profile-navigation diagnostics logging",
@@ -221,7 +221,7 @@ replace_once(
 #include "common/string_util.h"
 """,
     """#include "common/fs/path_util.h"
-#include "common/logging/log.h"
+#include "common/logging.h"
 #include "common/string_util.h"
 """,
     "add profile-selector diagnostics logging",
