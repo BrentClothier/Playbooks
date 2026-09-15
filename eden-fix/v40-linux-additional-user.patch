@@ -1,0 +1,41 @@
+diff --git a/src/core/hle/service/am/frontend/applet_profile_select.cpp b/src/core/hle/service/am/frontend/applet_profile_select.cpp
+index 89b5a1eab..f088979d4 100644
+--- a/src/core/hle/service/am/frontend/applet_profile_select.cpp
++++ b/src/core/hle/service/am/frontend/applet_profile_select.cpp
+@@ -8,6 +8,7 @@
+ #include "core/core.h"
+ #include "core/frontend/applets/profile_select.h"
+ #include "core/hle/service/acc/errors.h"
++#include "core/hle/service/acc/profile_manager.h"
+ #include "core/hle/service/am/am.h"
+ #include "core/hle/service/am/frontend/applet_profile_select.h"
+ #include "core/hle/service/am/service/storage.h"
+@@ -95,2 +96,10 @@ void ProfileSelect::Execute() {
++    LOG_INFO(Service_AM,
++             "V40_FIX ProfileSelectConfig version={} mode={} purpose={} additional_select={} "
++             "registration_permitted={} open_count={}",
++             static_cast<u32>(profile_select_version), static_cast<u32>(parameters.mode),
++             static_cast<u32>(parameters.purpose), parameters.display_options.additional_select,
++             parameters.display_options.is_registration_permitted,
++             system.GetProfileManager().GetOpenUserCount());
++
+     frontend.SelectProfile([this](std::optional<Common::UUID> uuid) { SelectionComplete(uuid); },
+                            parameters);
+@@ -102,2 +111,17 @@ void ProfileSelect::SelectionComplete(std::optional<Common::UUID> uuid) {
+     if (uuid.has_value() && uuid->IsValid()) {
++        auto& profile_manager = system.GetProfileManager();
++        const auto open_count_before = profile_manager.GetOpenUserCount();
++        profile_manager.OpenUser(*uuid);
++        const auto open_count_after = profile_manager.GetOpenUserCount();
++
++        const bool additional_select =
++            profile_select_version == ProfileSelectAppletVersion::Version1
++                ? config_old.display_options.additional_select
++                : config.display_options.additional_select;
++        LOG_INFO(Service_AM,
++                 "V40_FIX OpenSelectedUser uuid={} additional_select={} open_count_before={} "
++                 "open_count_after={} last_opened={}",
++                 uuid->FormattedString(), additional_select, open_count_before, open_count_after,
++                 profile_manager.GetLastOpenedUser().FormattedString());
++
+         output.result = 0;
