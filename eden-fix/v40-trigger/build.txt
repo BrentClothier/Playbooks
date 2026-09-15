@@ -1,0 +1,1 @@
+Trigger the dedicated v40 workflow after registration.
