@@ -386,6 +386,31 @@ replace_once(
     "return the selected row's UUID without re-indexing the sorted profile list",
 )
 
+replace_once(
+    main_window,
+    """    Settings::values.current_user = dialog.GetIndex();
+    return true;
+}
+""",
+    """    const auto uuid = dialog.GetUUID();
+    if (!uuid.has_value()) {
+        return false;
+    }
+
+    const auto user_index = QtCommon::system->GetProfileManager().GetUserIndex(*uuid);
+    if (!user_index.has_value()) {
+        return false;
+    }
+
+    LOG_INFO(Frontend, "V39_FIX CurrentUser uuid={} index={}", uuid->FormattedString(),
+             *user_index);
+    Settings::values.current_user = static_cast<s32>(*user_index);
+    return true;
+}
+""",
+    "translate the selected UUID to the persistent settings index",
+)
+
 util_cpp = Path("src/yuzu/util/util.cpp")
 replace_once(
     util_cpp,
@@ -419,7 +444,7 @@ replace_once(
 
     return uuid;
 """,
-    """    const auto select_profile = [] -> std::optional<Common::UUID> {
+    """    const auto select_profile = []() -> std::optional<Common::UUID> {
         const Core::Frontend::ProfileSelectParameters parameters{
             .mode = Service::AM::Frontend::UiMode::UserSelector,
             .invalid_uid_list = {},

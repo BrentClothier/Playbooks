@@ -145,7 +145,7 @@ index 23903b626..2af0d5cde 100644
      QVBoxLayout* layout;
      QTreeView* tree_view;
 diff --git a/src/yuzu/main_window.cpp b/src/yuzu/main_window.cpp
-index 9b6b0a8b6..de59e5f37 100644
+index 9b6b0a8b6..28cd41c52 100644
 --- a/src/yuzu/main_window.cpp
 +++ b/src/yuzu/main_window.cpp
 @@ -675,13 +675,13 @@ void MainWindow::ProfileSelectorSelectProfile(
@@ -162,6 +162,27 @@ index 9b6b0a8b6..de59e5f37 100644
  
 +    LOG_INFO(Frontend, "V39_FIX ProfileSelectorFinished uuid={}", uuid->FormattedString());
      emit ProfileSelectorFinishedSelection(uuid);
+ }
+ 
+@@ -1886,7 +1886,19 @@ bool MainWindow::SelectAndSetCurrentUser(
+         return false;
+     }
+ 
+-    Settings::values.current_user = dialog.GetIndex();
++    const auto uuid = dialog.GetUUID();
++    if (!uuid.has_value()) {
++        return false;
++    }
++
++    const auto user_index = QtCommon::system->GetProfileManager().GetUserIndex(*uuid);
++    if (!user_index.has_value()) {
++        return false;
++    }
++
++    LOG_INFO(Frontend, "V39_FIX CurrentUser uuid={} index={}", uuid->FormattedString(),
++             *user_index);
++    Settings::values.current_user = static_cast<s32>(*user_index);
+     return true;
  }
  
 diff --git a/src/yuzu/util/controller_navigation.cpp b/src/yuzu/util/controller_navigation.cpp
@@ -303,7 +324,7 @@ index 86e210368..78d50f57b 100644
      Core::HID::EmulatedController* handheld_controller;
  };
 diff --git a/src/yuzu/util/util.cpp b/src/yuzu/util/util.cpp
-index eb6583b35..31a6d8f79 100644
+index eb6583b35..3eb8a3cb7 100644
 --- a/src/yuzu/util/util.cpp
 +++ b/src/yuzu/util/util.cpp
 @@ -32,7 +32,7 @@ const std::optional<Common::UUID> GetProfileID() {
@@ -311,7 +332,7 @@ index eb6583b35..31a6d8f79 100644
      }
  
 -    const auto select_profile = [] {
-+    const auto select_profile = [] -> std::optional<Common::UUID> {
++    const auto select_profile = []() -> std::optional<Common::UUID> {
          const Core::Frontend::ProfileSelectParameters parameters{
              .mode = Service::AM::Frontend::UiMode::UserSelector,
              .invalid_uid_list = {},
