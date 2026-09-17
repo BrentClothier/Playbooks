@@ -1,0 +1,75 @@
+diff --git a/src/core/hle/service/acc/acc.cpp b/src/core/hle/service/acc/acc.cpp
+--- a/src/core/hle/service/acc/acc.cpp
++++ b/src/core/hle/service/acc/acc.cpp
+@@ -901,8 +901,11 @@ void Module::Interface::ListAllUsers(HLERequestContext& ctx) {
+ }
+ 
+ void Module::Interface::ListOpenUsers(HLERequestContext& ctx) {
+-    LOG_DEBUG(Service_ACC, "called");
+-    ctx.WriteBuffer(profile_manager->GetOpenUsers());
++    const auto open_users = profile_manager->GetOpenUsers();
++    LOG_INFO(Service_ACC, "V41_FIX ListOpenUsers count={} last_opened={}",
++             profile_manager->GetOpenUserCount(),
++             profile_manager->GetLastOpenedUser().FormattedString());
++    ctx.WriteBuffer(open_users);
+     IPC::ResponseBuilder rb{ctx, 2};
+     rb.Push(ResultSuccess);
+ }
+@@ -1246,7 +1249,11 @@ Module::Interface::~Interface() = default;
+ 
+ void LoopProcess(Core::System& system) {
+     auto module = std::make_shared<Module>();
+-    auto profile_manager = std::make_shared<ProfileManager>();
++    auto profile_manager = std::shared_ptr<ProfileManager>{
++        &system.GetProfileManager(), [](ProfileManager*) {}};
++    LOG_INFO(Service_ACC, "V41_FIX SharedProfileManager users={} open_count={} last_opened={}",
++             profile_manager->GetUserCount(), profile_manager->GetOpenUserCount(),
++             profile_manager->GetLastOpenedUser().FormattedString());
+     auto server_manager = std::make_unique<ServerManager>(system);
+ 
+     server_manager->RegisterNamedService("acc:aa",
+diff --git a/src/core/hle/service/am/frontend/applet_profile_select.cpp b/src/core/hle/service/am/frontend/applet_profile_select.cpp
+--- a/src/core/hle/service/am/frontend/applet_profile_select.cpp
++++ b/src/core/hle/service/am/frontend/applet_profile_select.cpp
+@@ -4,6 +4,7 @@
+ #include <cstring>
+ 
+ #include "common/assert.h"
++#include "common/settings.h"
+ #include "common/string_util.h"
+ #include "core/core.h"
+ #include "core/frontend/applets/profile_select.h"
+@@ -111,17 +112,27 @@ void ProfileSelect::SelectionComplete(std::optional<Common::UUID> uuid) {
+     if (uuid.has_value() && uuid->IsValid()) {
+         auto& profile_manager = system.GetProfileManager();
+         const auto open_count_before = profile_manager.GetOpenUserCount();
+-        profile_manager.OpenUser(*uuid);
+-        const auto open_count_after = profile_manager.GetOpenUserCount();
+-
+         const bool additional_select =
+             profile_select_version == ProfileSelectAppletVersion::Version1
+                 ? config_old.display_options.additional_select
+                 : config.display_options.additional_select;
++
++        Common::UUID primary_user{};
++        if (const auto configured_user =
++                profile_manager.GetUser(Settings::values.current_user.GetValue())) {
++            primary_user = *configured_user;
++            if (additional_select && primary_user.IsValid()) {
++                profile_manager.OpenUser(primary_user);
++            }
++        }
++        profile_manager.OpenUser(*uuid);
++        const auto open_count_after = profile_manager.GetOpenUserCount();
++
+         LOG_INFO(Service_AM,
+-                 "V40_FIX OpenSelectedUser uuid={} additional_select={} open_count_before={} "
+-                 "open_count_after={} last_opened={}",
+-                 uuid->FormattedString(), additional_select, open_count_before, open_count_after,
++                 "V41_FIX OpenSelectedUsers primary_uuid={} selected_uuid={} "
++                 "additional_select={} open_count_before={} open_count_after={} last_opened={}",
++                 primary_user.FormattedString(), uuid->FormattedString(), additional_select,
++                 open_count_before, open_count_after,
+                  profile_manager.GetLastOpenedUser().FormattedString());
+ 
+         output.result = 0;
