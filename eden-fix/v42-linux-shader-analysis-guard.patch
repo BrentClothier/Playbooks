@@ -1,0 +1,98 @@
+diff --git a/src/video_core/shader_cache.cpp b/src/video_core/shader_cache.cpp
+--- a/src/video_core/shader_cache.cpp
++++ b/src/video_core/shader_cache.cpp
+@@ -76,6 +76,12 @@ bool ShaderCache::RefreshStages(std::array<u64, 6>& unique_hashes) {
+             GraphicsEnvironment env{*maxwell3d, *gpu_memory, program, base_addr, start_address};
+             shader_info = MakeShaderInfo(env, *cpu_shader_addr);
+         }
++        if (!shader_info) {
++            shader_infos[index] = nullptr;
++            unique_hashes[index] = 0;
++            last_shaders_valid = false;
++            return false;
++        }
+         shader_infos[index] = shader_info;
+         unique_hashes[index] = shader_info->unique_hash;
+     }
+@@ -233,6 +239,18 @@ const ShaderInfo* ShaderCache::MakeShaderInfo(GenericEnvironment& env, VAddr cpu
+     if (const std::optional<u64> cached_hash{env.Analyze()}) {
+         info->unique_hash = *cached_hash;
+         info->size_bytes = env.CachedSizeBytes();
++    } else if (program_id == 0x0100D71004694000ULL) {
++        static u32 rejected_shader_count{};
++        if (rejected_shader_count < 32) {
++            LOG_ERROR(HW_GPU,
++                      "V42_FIX RejectUnterminatedShader count={} program_id={:#018x} stage={} "
++                      "program_base={:#x} start={:#x} failure_address={:#x} unmapped={}",
++                      rejected_shader_count, program_id, static_cast<u32>(env.ShaderStage()),
++                      env.ProgramBase(), env.StartAddress(), env.AnalysisFailureAddress(),
++                      env.AnalysisStoppedAtUnmappedMemory());
++        }
++        ++rejected_shader_count;
++        return nullptr;
+     } else {
+         // Slow path, not really hit on commercial games
+         // Build a control flow graph to get the real shader size
+diff --git a/src/video_core/shader_environment.cpp b/src/video_core/shader_environment.cpp
+--- a/src/video_core/shader_environment.cpp
++++ b/src/video_core/shader_environment.cpp
+@@ -154,6 +154,8 @@ u64 GenericEnvironment::ReadInstruction(u32 address) {
+ }
+ 
+ std::optional<u64> GenericEnvironment::Analyze() {
++    analysis_failure_address = 0;
++    analysis_stopped_at_unmapped_memory = false;
+     const std::optional<u64> size{TryFindSize()};
+     if (!size) {
+         return std::nullopt;
+@@ -263,6 +265,11 @@ std::optional<u64> GenericEnvironment::TryFindSize() {
+     size_t offset{0};
+     size_t size{BLOCK_SIZE};
+     while (size <= MAXIMUM_SIZE) {
++        if (!gpu_memory->IsFullyMappedRange(guest_addr, BLOCK_SIZE)) {
++            analysis_failure_address = guest_addr;
++            analysis_stopped_at_unmapped_memory = true;
++            return std::nullopt;
++        }
+         u64* const data = code.data() + offset / INST_SIZE;
+         gpu_memory->ReadBlock(guest_addr, data, BLOCK_SIZE);
+         for (size_t index = 0; index < BLOCK_SIZE; index += INST_SIZE) {
+@@ -278,6 +285,7 @@ std::optional<u64> GenericEnvironment::TryFindSize() {
+         size += BLOCK_SIZE;
+         offset += BLOCK_SIZE;
+     }
++    analysis_failure_address = guest_addr;
+     return std::nullopt;
+ }
+ 
+diff --git a/src/video_core/shader_environment.h b/src/video_core/shader_environment.h
+--- a/src/video_core/shader_environment.h
++++ b/src/video_core/shader_environment.h
+@@ -49,6 +49,18 @@ public:
+ 
+     [[nodiscard]] std::optional<u64> Analyze();
+ 
++    [[nodiscard]] GPUVAddr ProgramBase() const noexcept {
++        return program_base;
++    }
++
++    [[nodiscard]] GPUVAddr AnalysisFailureAddress() const noexcept {
++        return analysis_failure_address;
++    }
++
++    [[nodiscard]] bool AnalysisStoppedAtUnmappedMemory() const noexcept {
++        return analysis_stopped_at_unmapped_memory;
++    }
++
+     void SetCachedSize(size_t size_bytes);
+ 
+     [[nodiscard]] size_t CachedSizeWords() const noexcept;
+@@ -100,6 +112,8 @@ protected:
+ 
+     bool has_unbound_instructions = false;
+     bool has_hle_engine_state = false;
++    GPUVAddr analysis_failure_address{};
++    bool analysis_stopped_at_unmapped_memory = false;
+ };
+ 
+ class GraphicsEnvironment final : public GenericEnvironment {
