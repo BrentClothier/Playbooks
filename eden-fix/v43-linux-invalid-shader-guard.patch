@@ -1,0 +1,185 @@
+diff --git a/src/shader_recompiler/environment.h b/src/shader_recompiler/environment.h
+--- a/src/shader_recompiler/environment.h
++++ b/src/shader_recompiler/environment.h
+@@ -72,6 +72,14 @@
+ public:
+     virtual ~Environment() = default;
+
++    void SetRejectInvalidShaders(bool enabled) noexcept {
++        reject_invalid_shaders = enabled;
++    }
++
++    [[nodiscard]] bool RejectInvalidShaders() const noexcept {
++        return reject_invalid_shaders;
++    }
++
+     [[nodiscard]] virtual u64 ReadInstruction(u32 address) = 0;
+
+     [[nodiscard]] virtual u32 ReadCbufValue(u32 cbuf_index, u32 cbuf_offset) = 0;
+@@ -125,6 +133,7 @@
+     Stage stage{};
+     u32 start_address{};
+     bool is_proprietary_driver{};
++    bool reject_invalid_shaders{};
+ public:
+     ankerl::unordered_dense::map<CbufWordKey, u32, CbufWordKeyHash> cbuf_word_cache;
+     ankerl::unordered_dense::map<HandleKey,  u32, HandleKeyHash> handle_cache;
+diff --git a/src/shader_recompiler/frontend/maxwell/decode.cpp b/src/shader_recompiler/frontend/maxwell/decode.cpp
+--- a/src/shader_recompiler/frontend/maxwell/decode.cpp
++++ b/src/shader_recompiler/frontend/maxwell/decode.cpp
+@@ -40,12 +40,15 @@
+     return { mask, value };
+ }
+
+-Opcode Decode(u64 insn) {
++Opcode Decode(u64 insn, bool reject_invalid) {
+ #define INST(name, cute, encode) \
+     if (auto const p = MaskValueFromEncoding(encode); (insn & p.first) == p.second) \
+         return Opcode::name;
+ #include "maxwell.inc"
+ #undef INST
++    if (reject_invalid) {
++        throw Shader::LogicError("V43_FIX InvalidInstruction insn={:#018x}", insn);
++    }
+     ASSERT_MSG(false, "Invalid insn {:#016x}", insn);
+     return Opcode::NOP;
+ }
+diff --git a/src/shader_recompiler/frontend/maxwell/decode.h b/src/shader_recompiler/frontend/maxwell/decode.h
+--- a/src/shader_recompiler/frontend/maxwell/decode.h
++++ b/src/shader_recompiler/frontend/maxwell/decode.h
+@@ -8,6 +8,6 @@
+
+ namespace Shader::Maxwell {
+
+-[[nodiscard]] Opcode Decode(u64 insn);
++[[nodiscard]] Opcode Decode(u64 insn, bool reject_invalid = false);
+
+ } // namespace Shader::Maxwell
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -5,6 +5,7 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+
+ #include <algorithm>
++#include <atomic>
+ #include <cstddef>
+ #include <fstream>
+ #include <iostream>
+@@ -641,6 +642,9 @@
+         ++state.total;
+     }};
+     const auto load_graphics{[&](std::ifstream& file, std::vector<FileEnvironment> envs) {
++        for (auto& env : envs) {
++            env.SetRejectInvalidShaders(title_id == 0x0100D71004694000ULL);
++        }
+         GraphicsPipelineCacheKey key;
+         file.read(reinterpret_cast<char*>(&key), sizeof(key));
+
+@@ -851,6 +855,18 @@
+         std::move(modules), infos);
+
+ } catch (const Shader::Exception& exception) {
++    // Rebuilding the failed CFG here can throw again or repeat the original hang.
++    // The null pipeline is retained by the existing graphics cache and skips this draw.
++    if (std::ranges::any_of(envs, [](const auto* env) { return env->RejectInvalidShaders(); })) {
++        static std::atomic<u32> rejected_pipeline_count{};
++        const u32 count = rejected_pipeline_count.fetch_add(1, std::memory_order_relaxed);
++        if (count < 32) {
++            LOG_ERROR(Render_Vulkan,
++                      "V43_FIX RejectGraphicsPipeline count={} hash={:#018x} reason={}",
++                      count, key.Hash(), exception.what());
++        }
++        return nullptr;
++    }
+     auto hash = key.Hash();
+     size_t env_index{0};
+     for (size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+@@ -871,6 +887,9 @@
+ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline() {
+     GraphicsEnvironments environments;
+     GetGraphicsEnvironments(environments, graphics_key.unique_hashes);
++    for (auto* env : environments.Span()) {
++        env->SetRejectInvalidShaders(program_id == 0x0100D71004694000ULL);
++    }
+
+     main_pools.ReleaseContents();
+     auto pipeline{
+diff --git a/src/video_core/shader_environment.cpp b/src/video_core/shader_environment.cpp
+--- a/src/video_core/shader_environment.cpp
++++ b/src/video_core/shader_environment.cpp
+@@ -21,6 +21,8 @@
+ #include "common/settings.h"
+ #include <ranges>
+ #include "shader_recompiler/environment.h"
++#include "shader_recompiler/exception.h"
++#include "shader_recompiler/frontend/maxwell/decode.h"
+ #include "video_core/engines/kepler_compute.h"
+ #include "video_core/memory_manager.h"
+ #include "video_core/shader_environment.h"
+@@ -32,6 +34,21 @@
+ constexpr std::array<char, 8> MAGIC_NUMBER{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
+
+ constexpr size_t INST_SIZE = sizeof(u64);
++
++// Called only for actual instruction fetches; headers and scheduling words are not decoded.
++static u64 ValidateInstruction(const Shader::Environment& env, u32 address, u64 insn) {
++    if (env.RejectInvalidShaders()) {
++        try {
++            static_cast<void>(Shader::Maxwell::Decode(insn, true));
++        } catch (Shader::Exception& exception) {
++            exception.Append(fmt::format(" stage={} start={:#x} pc={:#x}",
++                                        static_cast<u32>(env.ShaderStage()),
++                                        env.StartAddress(), address));
++            throw;
++        }
++    }
++    return insn;
++}
+
+ using Maxwell = Tegra::Engines::Maxwell3D::Regs;
+
+@@ -147,10 +164,16 @@
+     read_highest = (std::max)(read_highest, address);
+
+     if (address >= cached_lowest && address < cached_highest) {
+-        return code[(address - cached_lowest) / INST_SIZE];
++        return ValidateInstruction(*this, address,
++                                   code[(address - cached_lowest) / INST_SIZE]);
++    }
++    if (RejectInvalidShaders() &&
++        !gpu_memory->IsFullyMappedRange(program_base + address, INST_SIZE)) {
++        throw Shader::LogicError("V43_FIX UnmappedInstruction stage={} pc={:#x}",
++                                 static_cast<u32>(stage), address);
+     }
+     has_unbound_instructions = true;
+-    return gpu_memory->Read<u64>(program_base + address);
++    return ValidateInstruction(*this, address, gpu_memory->Read<u64>(program_base + address));
+ }
+
+ std::optional<u64> GenericEnvironment::Analyze() {
+@@ -346,7 +369,13 @@
+ }
+
+ u32 GraphicsEnvironment::ReadCbufValue(u32 cbuf_index, u32 cbuf_offset) {
+-    const auto& cbuf{maxwell3d->state.shader_stages[stage_index].const_buffers[cbuf_index]};
++    const auto& buffers{maxwell3d->state.shader_stages[stage_index].const_buffers};
++    if (RejectInvalidShaders() &&
++        (cbuf_index >= buffers.size() || !buffers[cbuf_index].enabled)) {
++        throw Shader::LogicError("V43_FIX InvalidConstantBuffer stage={} index={} offset={:#x}",
++                                 static_cast<u32>(stage), cbuf_index, cbuf_offset);
++    }
++    const auto& cbuf{buffers[cbuf_index]};
+     ASSERT(cbuf.enabled);
+     u32 value{};
+     if (cbuf_offset < cbuf.size) {
+@@ -538,7 +567,8 @@
+     if (address < read_lowest || address > read_highest) {
+         throw Shader::LogicError("Out of bounds address {}", address);
+     }
+-    return code[(address - read_lowest) / sizeof(u64)];
++    return ValidateInstruction(*this, address,
++                               code[(address - read_lowest) / sizeof(u64)]);
+ }
+
+ u32 FileEnvironment::ReadCbufValue(u32 cbuf_index, u32 cbuf_offset) {
