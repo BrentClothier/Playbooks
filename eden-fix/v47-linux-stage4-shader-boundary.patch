@@ -1,0 +1,64 @@
+diff --git a/src/video_core/shader_environment.cpp b/src/video_core/shader_environment.cpp
+index b76f3a1..50224e8 100644
+--- a/src/video_core/shader_environment.cpp
++++ b/src/video_core/shader_environment.cpp
+@@ -47,14 +47,21 @@ static u64 ValidateInstruction(const Shader::Environment& env, u32 address, u64
+         // the three confirmed shader layouts as having reached their end; EXIT ignores the other
+         // instruction fields, so the opcode prefix is sufficient and preserves earlier control
+         // flow. Every other invalid instruction remains subject to v43's safe rejection path.
+-        if (stage == 0 && address == 0x10008 && insn == 0 &&
+-            (start == 0xfd30 || start == 0xfe30 || start == 0xff30)) {
++        const bool stage0_boundary =
++            stage == 0 && (start == 0xfd30 || start == 0xfe30 || start == 0xff30);
++        const bool stage4_boundary = stage == 4 && start == 0xff30;
++        if (address == 0x10008 && insn == 0 && (stage0_boundary || stage4_boundary)) {
+             constexpr u64 MaxwellExitInstruction = 0xe30000000007000fULL;
+             static std::atomic<u32> repaired_boundary_count{};
+             const u32 count =
+                 repaired_boundary_count.fetch_add(1, std::memory_order_relaxed);
+             if (count < 32) {
+-                if (start == 0xff30) {
++                if (stage4_boundary) {
++                    LOG_WARNING(HW_GPU,
++                                "V47_FIX RepairStage4RotatingBoundary count={} stage={} "
++                                "start={:#x} pc={:#x}",
++                                count, stage, start, address);
++                } else if (start == 0xff30) {
+                     LOG_WARNING(HW_GPU,
+                                 "V46_FIX RepairRotatingShaderBoundary count={} stage={} "
+                                 "start={:#x} pc={:#x}",
+@@ -332,7 +339,8 @@ std::optional<u64> GenericEnvironment::TryFindSize() {
+         // size discovery can retain the draw; every other malformed shader keeps v42's rejection.
+         constexpr u32 RotatingShaderStart = 0xff30;
+         constexpr u32 RotatingShaderExit = 0x10008;
+-        if (RejectInvalidShaders() && static_cast<u32>(stage) == 0 &&
++        const u32 rotating_stage = static_cast<u32>(stage);
++        if (RejectInvalidShaders() && (rotating_stage == 0 || rotating_stage == 4) &&
+             start_address == RotatingShaderStart && offset == 0) {
+             constexpr size_t repair_offset = RotatingShaderExit - RotatingShaderStart;
+             u64& boundary_instruction = data[repair_offset / INST_SIZE];
+@@ -342,11 +350,19 @@ std::optional<u64> GenericEnvironment::TryFindSize() {
+                 const u32 count = discovered_rotating_boundary_count.fetch_add(
+                     1, std::memory_order_relaxed);
+                 if (count < 32) {
+-                    LOG_WARNING(HW_GPU,
+-                                "V46_FIX DiscoverRotatingShaderBoundary count={} stage={} "
+-                                "start={:#x} pc={:#x}",
+-                                count, static_cast<u32>(stage), start_address,
+-                                RotatingShaderExit);
++                    if (rotating_stage == 4) {
++                        LOG_WARNING(HW_GPU,
++                                    "V47_FIX DiscoverStage4RotatingBoundary count={} stage={} "
++                                    "start={:#x} pc={:#x}",
++                                    count, rotating_stage, start_address,
++                                    RotatingShaderExit);
++                    } else {
++                        LOG_WARNING(HW_GPU,
++                                    "V46_FIX DiscoverRotatingShaderBoundary count={} stage={} "
++                                    "start={:#x} pc={:#x}",
++                                    count, rotating_stage, start_address,
++                                    RotatingShaderExit);
++                    }
+                 }
+                 return repair_offset + INST_SIZE;
+             }
