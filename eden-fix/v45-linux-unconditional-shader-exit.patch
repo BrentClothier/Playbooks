@@ -1,0 +1,12 @@
+diff --git a/src/video_core/shader_environment.cpp b/src/video_core/shader_environment.cpp
+--- a/src/video_core/shader_environment.cpp
++++ b/src/video_core/shader_environment.cpp
+@@ -49,7 +49,7 @@ static u64 ValidateInstruction(const Shader::Environment& env, u32 address, u64
+         // flow. Every other invalid instruction remains subject to v43's safe rejection path.
+         if (stage == 0 && address == 0x10008 && insn == 0 &&
+             (start == 0xfd30 || start == 0xfe30)) {
+-            constexpr u64 MaxwellExitInstruction = 0xe300000000000000ULL;
++            constexpr u64 MaxwellExitInstruction = 0xe30000000007000fULL;
+             static std::atomic<u32> repaired_boundary_count{};
+             const u32 count =
+                 repaired_boundary_count.fetch_add(1, std::memory_order_relaxed);
