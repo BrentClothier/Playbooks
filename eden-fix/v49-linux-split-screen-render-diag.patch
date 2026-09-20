@@ -1,0 +1,313 @@
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+index 269afae..25cea9d 100644
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -551,6 +551,20 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
+     }
+     graphics_key.state.Refresh(*maxwell3d, dynamic_features);
+ 
++    static u32 v49_pipeline_key_diag_count{};
++    if (VideoCommon::MinecraftSplitScreenDiagnosticsActive() &&
++        v49_pipeline_key_diag_count < 480) {
++        LOG_WARNING(Render_Vulkan,
++                    "V49_DIAG PipelineKey count={} hash={:#x} viewport_transform={} topology={} shaders=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
++                    v49_pipeline_key_diag_count, graphics_key.Hash(),
++                    graphics_key.state.viewport_transform_enabled.Value(),
++                    static_cast<u32>(graphics_key.state.topology.Value()),
++                    graphics_key.unique_hashes[0], graphics_key.unique_hashes[1],
++                    graphics_key.unique_hashes[2], graphics_key.unique_hashes[3],
++                    graphics_key.unique_hashes[4], graphics_key.unique_hashes[5]);
++        ++v49_pipeline_key_diag_count;
++    }
++
+     static u32 v27_pipeline_key_diag_count{};
+     if (v27_pipeline_key_diag_count < 240) {
+         LOG_WARNING(Render_Vulkan,
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+index ceed948..2010e21 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -39,6 +39,7 @@
+ #include "video_core/renderer_vulkan/vk_texture_cache.h"
+ #include "video_core/renderer_vulkan/vk_update_descriptor.h"
+ #include "video_core/shader_cache.h"
++#include "video_core/shader_environment.h"
+ #include "video_core/texture_cache/texture_cache_base.h"
+ #include "video_core/vulkan_common/vulkan_device.h"
+ #include "video_core/vulkan_common/vulkan_wrapper.h"
+@@ -239,6 +240,10 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
+ 
+     static u32 v24_prepare_diag_count{};
+     const u32 v24_prepare_call = v24_prepare_diag_count++;
++    static u32 v49_prepare_diag_count{};
++    const bool v49_active = VideoCommon::MinecraftSplitScreenDiagnosticsActive();
++    const u32 v49_prepare_call = v49_active ? v49_prepare_diag_count++ : 0;
++    const bool v49_log = v49_active && v49_prepare_call < 480;
+     GraphicsPipeline* const pipeline{pipeline_cache.CurrentGraphicsPipeline()};
+     if (!pipeline) {
+         if (v24_prepare_call < 240) {
+@@ -246,6 +251,11 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
+                         "V24_DIAG PrepareDraw call={} indexed={} result=no_pipeline",
+                         v24_prepare_call, is_indexed);
+         }
++        if (v49_log) {
++            LOG_WARNING(Render_Vulkan,
++                        "V49_DIAG PrepareDraw call={} indexed={} result=no_pipeline",
++                        v49_prepare_call, is_indexed);
++        }
+         return;
+     }
+     std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+@@ -257,6 +267,11 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
+                         "V24_DIAG PrepareDraw call={} indexed={} result=configure_failed",
+                         v24_prepare_call, is_indexed);
+         }
++        if (v49_log) {
++            LOG_WARNING(Render_Vulkan,
++                        "V49_DIAG PrepareDraw call={} indexed={} result=configure_failed",
++                        v49_prepare_call, is_indexed);
++        }
+         return;
+     }
+     if (v24_prepare_call < 240) {
+@@ -283,6 +298,37 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
+                     static_cast<u32>(v25_regs.stencil_enable),
+                     static_cast<u32>(v25_regs.transform_feedback_enabled));
+     }
++    if (v49_log) {
++        const auto& regs = maxwell3d->regs;
++        const auto& color0 = regs.color_mask[0];
++        const auto& vp0 = regs.viewport_transform[0];
++        const auto& vp1 = regs.viewport_transform[1];
++        const auto& sc0 = regs.scissor_test[0];
++        const auto& sc1 = regs.scissor_test[1];
++        LOG_WARNING(Render_Vulkan,
++                    "V49_DIAG PrepareDraw call={} indexed={} result=configured rasterize={} topology={} clip=({},{} {}x{}) viewport_scale_offset={} rt_count={} rt0_addr={:#x} rt0_format={} color0_raw={:#x} depth_test={} depth_write={} stencil={} tf={}",
++                    v49_prepare_call, is_indexed, static_cast<u32>(regs.rasterize_enable),
++                    static_cast<u32>(maxwell3d->draw_manager.draw_state.topology),
++                    static_cast<u32>(regs.surface_clip.x), static_cast<u32>(regs.surface_clip.y),
++                    static_cast<u32>(regs.surface_clip.width),
++                    static_cast<u32>(regs.surface_clip.height),
++                    static_cast<u32>(regs.viewport_scale_offset_enabled),
++                    static_cast<u32>(regs.rt_control.count), regs.rt[0].Address(),
++                    static_cast<u32>(regs.rt[0].format), color0.raw,
++                    static_cast<u32>(regs.depth_test_enable),
++                    static_cast<u32>(regs.depth_write_enabled),
++                    static_cast<u32>(regs.stencil_enable),
++                    static_cast<u32>(regs.transform_feedback_enabled));
++        LOG_WARNING(Render_Vulkan,
++                    "V49_DIAG Viewport call={} vp0=({},{},{},{}) vp1=({},{},{},{}) sc0=({},{},{},{},{}) sc1=({},{},{},{},{})",
++                    v49_prepare_call, vp0.scale_x, vp0.scale_y, vp0.translate_x, vp0.translate_y,
++                    vp1.scale_x, vp1.scale_y, vp1.translate_x, vp1.translate_y,
++                    static_cast<u32>(sc0.enable), static_cast<u32>(sc0.min_x),
++                    static_cast<u32>(sc0.min_y), static_cast<u32>(sc0.max_x),
++                    static_cast<u32>(sc0.max_y), static_cast<u32>(sc1.enable),
++                    static_cast<u32>(sc1.min_x), static_cast<u32>(sc1.min_y),
++                    static_cast<u32>(sc1.max_x), static_cast<u32>(sc1.max_y));
++    }
+ 
+     UpdateDynamicStates();
+ 
+@@ -297,6 +343,15 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
+         const auto& draw_state = maxwell3d->draw_manager.draw_state;
+         const u32 num_instances{instance_count};
+         const DrawParams draw_params{MakeDrawParams(draw_state, num_instances, is_indexed)};
++        static u32 v49_draw_diag_count{};
++        if (VideoCommon::MinecraftSplitScreenDiagnosticsActive() && v49_draw_diag_count < 480) {
++            LOG_WARNING(Render_Vulkan,
++                        "V49_DIAG Draw submit={} indexed={} vertices={} instances={} first_index={} base_vertex={} base_instance={}",
++                        v49_draw_diag_count, draw_params.is_indexed, draw_params.num_vertices,
++                        draw_params.num_instances, draw_params.first_index, draw_params.base_vertex,
++                        draw_params.base_instance);
++            ++v49_draw_diag_count;
++        }
+         static u32 v24_draw_diag_count{};
+         if (v24_draw_diag_count < 240) {
+             LOG_WARNING(Render_Vulkan,
+@@ -420,6 +475,21 @@ void RasterizerVulkan::DrawTexture() {
+     const auto& texture = texture_cache.GetImageView(draw_texture_state.src_texture);
+     const auto* framebuffer = texture_cache.GetFramebuffer();
+ 
++    static u32 v49_draw_texture_diag_count{};
++    if (VideoCommon::MinecraftSplitScreenDiagnosticsActive() &&
++        v49_draw_texture_diag_count < 240) {
++        LOG_WARNING(Render_Vulkan,
++                    "V49_DIAG DrawTexture call={} src_texture={} src_sampler={} dst=({},{})-({},{}) src=({},{})-({},{}) texture_size={}x{} framebuffer={}x{}",
++                    v49_draw_texture_diag_count, draw_texture_state.src_texture,
++                    draw_texture_state.src_sampler, draw_texture_state.dst_x0,
++                    draw_texture_state.dst_y0, draw_texture_state.dst_x1,
++                    draw_texture_state.dst_y1, draw_texture_state.src_x0,
++                    draw_texture_state.src_y0, draw_texture_state.src_x1,
++                    draw_texture_state.src_y1, texture.size.width, texture.size.height,
++                    framebuffer->RenderArea().width, framebuffer->RenderArea().height);
++        ++v49_draw_texture_diag_count;
++    }
++
+     const bool src_rescaling = texture_cache.IsRescaling() && texture.IsRescaled();
+     const bool dst_rescaling = texture_cache.IsRescaling() && framebuffer->IsRescaled();
+ 
+@@ -465,6 +535,20 @@ void RasterizerVulkan::Clear(u32 layer_count) {
+     const Framebuffer* const framebuffer = texture_cache.GetFramebuffer();
+     const VkExtent2D render_area = framebuffer->RenderArea();
+ 
++    static u32 v49_clear_diag_count{};
++    if (VideoCommon::MinecraftSplitScreenDiagnosticsActive() && v49_clear_diag_count < 240) {
++        const auto& sc = regs.scissor_test[0];
++        LOG_WARNING(Render_Vulkan,
++                    "V49_DIAG Clear call={} layers={} color={} depth={} stencil={} clear_rgba=({},{},{},{}) render_area={}x{} rt0_addr={:#x} scissor0=({},{},{},{},{})",
++                    v49_clear_diag_count, layer_count, use_color, use_depth, use_stencil,
++                    regs.clear_color[0], regs.clear_color[1], regs.clear_color[2],
++                    regs.clear_color[3], render_area.width, render_area.height,
++                    regs.rt[0].Address(), static_cast<u32>(sc.enable),
++                    static_cast<u32>(sc.min_x), static_cast<u32>(sc.min_y),
++                    static_cast<u32>(sc.max_x), static_cast<u32>(sc.max_y));
++        ++v49_clear_diag_count;
++    }
++
+     constexpr bool ENABLE_DEFERRED_CLEAR = true;
+     const bool color_full_channels = regs.clear_surface.R && regs.clear_surface.G &&
+                                      regs.clear_surface.B && regs.clear_surface.A;
+diff --git a/src/video_core/shader_environment.cpp b/src/video_core/shader_environment.cpp
+index 33a93af..54a9e64 100644
+--- a/src/video_core/shader_environment.cpp
++++ b/src/video_core/shader_environment.cpp
+@@ -32,6 +32,20 @@
+ 
+ namespace VideoCommon {
+ 
++namespace {
++std::atomic<bool> minecraft_split_screen_diagnostics_active{};
++}
++
++void ActivateMinecraftSplitScreenDiagnostics() noexcept {
++    if (!minecraft_split_screen_diagnostics_active.exchange(true, std::memory_order_relaxed)) {
++        LOG_WARNING(HW_GPU, "V49_DIAG ActivateSplitScreenRenderTrace");
++    }
++}
++
++bool MinecraftSplitScreenDiagnosticsActive() noexcept {
++    return minecraft_split_screen_diagnostics_active.load(std::memory_order_relaxed);
++}
++
+ constexpr std::array<char, 8> MAGIC_NUMBER{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
+ 
+ constexpr size_t INST_SIZE = sizeof(u64);
+@@ -353,6 +367,7 @@ std::optional<u64> GenericEnvironment::TryFindSize() {
+                         1, std::memory_order_relaxed);
+                     if (count < 32) {
+                         if (rotating_stage4) {
++                            ActivateMinecraftSplitScreenDiagnostics();
+                             LOG_WARNING(HW_GPU,
+                                         "V48_FIX DiscoverStage4RotatingPrefix count={} stage={} "
+                                         "start={:#x} pc={:#x} size={:#x}",
+diff --git a/src/video_core/shader_environment.h b/src/video_core/shader_environment.h
+index b35db0e..cf77e8e 100644
+--- a/src/video_core/shader_environment.h
++++ b/src/video_core/shader_environment.h
+@@ -29,6 +29,9 @@ class Memorymanager;
+ 
+ namespace VideoCommon {
+ 
++void ActivateMinecraftSplitScreenDiagnostics() noexcept;
++[[nodiscard]] bool MinecraftSplitScreenDiagnosticsActive() noexcept;
++
+ class GenericEnvironment : public Shader::Environment {
+ public:
+     explicit GenericEnvironment() = default;
+diff --git a/src/video_core/texture_cache/texture_cache.h b/src/video_core/texture_cache/texture_cache.h
+index dc6ad91..3b3eb7e 100644
+--- a/src/video_core/texture_cache/texture_cache.h
++++ b/src/video_core/texture_cache/texture_cache.h
+@@ -20,6 +20,7 @@
+ #include "video_core/engines/kepler_compute.h"
+ #include "video_core/guest_memory.h"
+ #include "video_core/host1x/gpu_device_memory_manager.h"
++#include "video_core/shader_environment.h"
+ #include "video_core/texture_cache/image_view_base.h"
+ #include "video_core/texture_cache/samples_helper.h"
+ #include "video_core/texture_cache/texture_cache_base.h"
+@@ -476,6 +477,48 @@ template <class P>
+ void TextureCache<P>::UpdateRenderTargets(bool is_clear) {
+     using namespace VideoCommon::Dirty;
+     auto& flags = maxwell3d->dirty.flags;
++    static u32 v49_render_target_diag_count{};
++    const auto v49_log_render_targets = [&](const char* phase) {
++        if (!MinecraftSplitScreenDiagnosticsActive() || v49_render_target_diag_count >= 480) {
++            return;
++        }
++        const u32 call = v49_render_target_diag_count++;
++        LOG_WARNING(HW_GPU,
++                    "V49_DIAG RenderTargets call={} phase={} serial={} active_mask={:#x} surface={}x{} rescaled={}",
++                    call, phase, render_targets_serial, rt_active_mask, render_targets.size.width,
++                    render_targets.size.height, render_targets.is_rescaled);
++        for (size_t index = 0; index < NUM_RT; ++index) {
++            const ImageViewId view_id = render_targets.color_buffer_ids[index];
++            if (!view_id) {
++                continue;
++            }
++            const ImageId image_id = slot_image_views[view_id].image_id;
++            const ImageBase& image = slot_images[image_id];
++            LOG_WARNING(HW_GPU,
++                        "V49_DIAG ColorTarget call={} slot={} draw_buffer={} view={} image={} cpu={:#x} gpu={:#x} format={} type={} size={}x{}x{} samples={} guest={:#x} unswizzled={:#x} gpu_modified={} tick={} flags={:#x}",
++                        call, index, static_cast<u32>(render_targets.draw_buffers[index]),
++                        view_id.Value(), image_id.Value(), image.cpu_addr, image.gpu_addr,
++                        static_cast<u32>(image.info.format), static_cast<u32>(image.info.type),
++                        image.info.size.width, image.info.size.height, image.info.size.depth,
++                        image.info.num_samples, image.guest_size_bytes, image.unswizzled_size_bytes,
++                        True(image.flags & ImageFlagBits::GpuModified), image.modification_tick,
++                        static_cast<u32>(image.flags));
++        }
++        const ImageViewId depth_view_id = render_targets.depth_buffer_id;
++        if (depth_view_id) {
++            const ImageId image_id = slot_image_views[depth_view_id].image_id;
++            const ImageBase& image = slot_images[image_id];
++            LOG_WARNING(HW_GPU,
++                        "V49_DIAG DepthTarget call={} view={} image={} cpu={:#x} gpu={:#x} format={} type={} size={}x{}x{} samples={} guest={:#x} unswizzled={:#x} gpu_modified={} tick={} flags={:#x}",
++                        call, depth_view_id.Value(), image_id.Value(), image.cpu_addr,
++                        image.gpu_addr, static_cast<u32>(image.info.format),
++                        static_cast<u32>(image.info.type), image.info.size.width,
++                        image.info.size.height, image.info.size.depth, image.info.num_samples,
++                        image.guest_size_bytes, image.unswizzled_size_bytes,
++                        True(image.flags & ImageFlagBits::GpuModified), image.modification_tick,
++                        static_cast<u32>(image.flags));
++        }
++    };
+     static u32 v25_render_target_diag_count{};
+     const auto v25_log_render_targets = [&](const char* phase) {
+         if (v25_render_target_diag_count >= 240) {
+@@ -526,6 +569,7 @@ void TextureCache<P>::UpdateRenderTargets(bool is_clear) {
+         const ImageViewId depth_buffer_id = render_targets.depth_buffer_id;
+         PrepareImageView(depth_buffer_id, true, is_clear && IsFullClear(depth_buffer_id));
+         v25_log_render_targets("reuse");
++        v49_log_render_targets("reuse");
+         return;
+     }
+ 
+@@ -623,6 +667,7 @@ void TextureCache<P>::UpdateRenderTargets(bool is_clear) {
+     }
+ 
+     v25_log_render_targets("rebuild");
++    v49_log_render_targets("rebuild");
+     flags[Dirty::DepthBiasGlobal] = true;
+ }
+ 
+@@ -2685,8 +2730,19 @@ void TextureCache<P>::SynchronizeAliases(ImageId image_id) {
+     });
+     const auto& resolution = Settings::values.resolution_info;
+     static u32 v29_alias_sample_diag_count{};
++    static u32 v49_alias_diag_count{};
+     const auto copy_alias = [&](const AliasedImage& aliased) {
+         Image& source = slot_images[aliased.id];
++        if (MinecraftSplitScreenDiagnosticsActive() && v49_alias_diag_count < 240) {
++            LOG_WARNING(HW_GPU,
++                        "V49_DIAG AliasSync count={} dst_id={} dst_gpu={:#x} dst_samples={} dst_size={}x{} dst_tick={} src_id={} src_gpu={:#x} src_samples={} src_size={}x{} src_tick={} copies={}",
++                        v49_alias_diag_count, image_id.Value(), image.gpu_addr,
++                        image.info.num_samples, image.info.size.width, image.info.size.height,
++                        image.modification_tick, aliased.id.Value(), source.gpu_addr,
++                        source.info.num_samples, source.info.size.width, source.info.size.height,
++                        source.modification_tick, aliased.copies.size());
++            ++v49_alias_diag_count;
++        }
+         if (image.info.num_samples != source.info.num_samples) {
+             if (v29_alias_sample_diag_count < 120) {
+                 LOG_WARNING(HW_GPU,
