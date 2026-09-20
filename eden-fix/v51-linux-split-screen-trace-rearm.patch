@@ -1,0 +1,191 @@
+diff --git a/src/video_core/shader_environment.h b/src/video_core/shader_environment.h
+index cf77e8e..d848441 100644
+--- a/src/video_core/shader_environment.h
++++ b/src/video_core/shader_environment.h
+@@ -31,6 +31,7 @@ namespace VideoCommon {
+ 
+ void ActivateMinecraftSplitScreenDiagnostics() noexcept;
+ [[nodiscard]] bool MinecraftSplitScreenDiagnosticsActive() noexcept;
++[[nodiscard]] u32 MinecraftSplitScreenDiagnosticsGeneration() noexcept;
+ 
+ class GenericEnvironment : public Shader::Environment {
+ public:
+diff --git a/src/video_core/shader_environment.cpp b/src/video_core/shader_environment.cpp
+index 7b53087..a75578e 100644
+--- a/src/video_core/shader_environment.cpp
++++ b/src/video_core/shader_environment.cpp
+@@ -34,18 +34,29 @@ namespace VideoCommon {
+ 
+ namespace {
+ std::atomic<bool> minecraft_split_screen_diagnostics_active{};
++std::atomic<u32> minecraft_split_screen_diagnostics_generation{};
+ }
+ 
+ void ActivateMinecraftSplitScreenDiagnostics() noexcept {
+-    if (!minecraft_split_screen_diagnostics_active.exchange(true, std::memory_order_relaxed)) {
++    const bool was_active =
++        minecraft_split_screen_diagnostics_active.exchange(true, std::memory_order_relaxed);
++    const u32 generation = minecraft_split_screen_diagnostics_generation.fetch_add(
++                               1, std::memory_order_relaxed) +
++                           1;
++    if (!was_active) {
+         LOG_WARNING(HW_GPU, "V49_DIAG ActivateSplitScreenRenderTrace");
+     }
++    LOG_WARNING(HW_GPU, "V51_DIAG RearmSplitScreenRenderTrace generation={}", generation);
+ }
+ 
+ bool MinecraftSplitScreenDiagnosticsActive() noexcept {
+     return minecraft_split_screen_diagnostics_active.load(std::memory_order_relaxed);
+ }
+ 
++u32 MinecraftSplitScreenDiagnosticsGeneration() noexcept {
++    return minecraft_split_screen_diagnostics_generation.load(std::memory_order_relaxed);
++}
++
+ constexpr std::array<char, 8> MAGIC_NUMBER{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
+ 
+ constexpr size_t INST_SIZE = sizeof(u64);
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+index 25cea9d..145ac73 100644
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -552,6 +552,13 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
+     graphics_key.state.Refresh(*maxwell3d, dynamic_features);
+ 
+     static u32 v49_pipeline_key_diag_count{};
++    static u32 v51_pipeline_key_generation{};
++    const u32 v51_pipeline_generation =
++        VideoCommon::MinecraftSplitScreenDiagnosticsGeneration();
++    if (v51_pipeline_generation != v51_pipeline_key_generation) {
++        v51_pipeline_key_generation = v51_pipeline_generation;
++        v49_pipeline_key_diag_count = 0;
++    }
+     if (VideoCommon::MinecraftSplitScreenDiagnosticsActive() &&
+         v49_pipeline_key_diag_count < 480) {
+         LOG_WARNING(Render_Vulkan,
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+index 2010e21..2c64183 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -241,7 +241,14 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
+     static u32 v24_prepare_diag_count{};
+     const u32 v24_prepare_call = v24_prepare_diag_count++;
+     static u32 v49_prepare_diag_count{};
++    static u32 v51_prepare_generation{};
+     const bool v49_active = VideoCommon::MinecraftSplitScreenDiagnosticsActive();
++    const u32 v51_prepare_current_generation =
++        VideoCommon::MinecraftSplitScreenDiagnosticsGeneration();
++    if (v51_prepare_current_generation != v51_prepare_generation) {
++        v51_prepare_generation = v51_prepare_current_generation;
++        v49_prepare_diag_count = 0;
++    }
+     const u32 v49_prepare_call = v49_active ? v49_prepare_diag_count++ : 0;
+     const bool v49_log = v49_active && v49_prepare_call < 480;
+     GraphicsPipeline* const pipeline{pipeline_cache.CurrentGraphicsPipeline()};
+@@ -344,6 +351,13 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
+         const u32 num_instances{instance_count};
+         const DrawParams draw_params{MakeDrawParams(draw_state, num_instances, is_indexed)};
+         static u32 v49_draw_diag_count{};
++        static u32 v51_draw_generation{};
++        const u32 v51_draw_current_generation =
++            VideoCommon::MinecraftSplitScreenDiagnosticsGeneration();
++        if (v51_draw_current_generation != v51_draw_generation) {
++            v51_draw_generation = v51_draw_current_generation;
++            v49_draw_diag_count = 0;
++        }
+         if (VideoCommon::MinecraftSplitScreenDiagnosticsActive() && v49_draw_diag_count < 480) {
+             LOG_WARNING(Render_Vulkan,
+                         "V49_DIAG Draw submit={} indexed={} vertices={} instances={} first_index={} base_vertex={} base_instance={}",
+@@ -476,6 +490,13 @@ void RasterizerVulkan::DrawTexture() {
+     const auto* framebuffer = texture_cache.GetFramebuffer();
+ 
+     static u32 v49_draw_texture_diag_count{};
++    static u32 v51_draw_texture_generation{};
++    const u32 v51_draw_texture_current_generation =
++        VideoCommon::MinecraftSplitScreenDiagnosticsGeneration();
++    if (v51_draw_texture_current_generation != v51_draw_texture_generation) {
++        v51_draw_texture_generation = v51_draw_texture_current_generation;
++        v49_draw_texture_diag_count = 0;
++    }
+     if (VideoCommon::MinecraftSplitScreenDiagnosticsActive() &&
+         v49_draw_texture_diag_count < 240) {
+         LOG_WARNING(Render_Vulkan,
+@@ -536,6 +557,13 @@ void RasterizerVulkan::Clear(u32 layer_count) {
+     const VkExtent2D render_area = framebuffer->RenderArea();
+ 
+     static u32 v49_clear_diag_count{};
++    static u32 v51_clear_generation{};
++    const u32 v51_clear_current_generation =
++        VideoCommon::MinecraftSplitScreenDiagnosticsGeneration();
++    if (v51_clear_current_generation != v51_clear_generation) {
++        v51_clear_generation = v51_clear_current_generation;
++        v49_clear_diag_count = 0;
++    }
+     if (VideoCommon::MinecraftSplitScreenDiagnosticsActive() && v49_clear_diag_count < 240) {
+         const auto& sc = regs.scissor_test[0];
+         LOG_WARNING(Render_Vulkan,
+@@ -631,6 +659,34 @@ void RasterizerVulkan::Clear(u32 layer_count) {
+         return;
+     }
+ 
++    static u32 v51_clear_decision_diag_count{};
++    static u32 v51_clear_decision_generation{};
++    const u32 v51_clear_decision_current_generation =
++        VideoCommon::MinecraftSplitScreenDiagnosticsGeneration();
++    if (v51_clear_decision_current_generation != v51_clear_decision_generation) {
++        v51_clear_decision_generation = v51_clear_decision_current_generation;
++        v51_clear_decision_diag_count = 0;
++    }
++    if (VideoCommon::MinecraftSplitScreenDiagnosticsActive() &&
++        v51_clear_decision_diag_count < 480) {
++        const auto& sc = regs.scissor_test[0];
++        LOG_WARNING(Render_Vulkan,
++                    "V51_DIAG ClearDecision generation={} call={} use_scissor={} can_defer={} "
++                    "reg_scissor=({},{},{},{},{}) "
++                    "clear_rect=({},{},{}x{}) render_area={}x{} color={} depth={} stencil={} "
++                    "rt0_addr={:#x}",
++                    v51_clear_decision_current_generation, v51_clear_decision_diag_count,
++                    static_cast<u32>(regs.clear_control.use_scissor), can_defer_clear,
++                    static_cast<u32>(sc.enable),
++                    static_cast<u32>(sc.min_x), static_cast<u32>(sc.min_y),
++                    static_cast<u32>(sc.max_x), static_cast<u32>(sc.max_y),
++                    clear_rect.rect.offset.x, clear_rect.rect.offset.y,
++                    clear_rect.rect.extent.width, clear_rect.rect.extent.height,
++                    render_area.width, render_area.height, use_color, use_depth, use_stencil,
++                    regs.rt[0].Address());
++        ++v51_clear_decision_diag_count;
++    }
++
+     const u32 color_attachment = regs.clear_surface.RT;
+     if (use_color && framebuffer->HasAspectColorBit(color_attachment)) {
+         const auto format = VideoCore::Surface::PixelFormatFromRenderTargetFormat(regs.rt[color_attachment].format);
+diff --git a/src/video_core/texture_cache/texture_cache.h b/src/video_core/texture_cache/texture_cache.h
+index 3b3eb7e..477e35a 100644
+--- a/src/video_core/texture_cache/texture_cache.h
++++ b/src/video_core/texture_cache/texture_cache.h
+@@ -478,6 +478,12 @@ void TextureCache<P>::UpdateRenderTargets(bool is_clear) {
+     using namespace VideoCommon::Dirty;
+     auto& flags = maxwell3d->dirty.flags;
+     static u32 v49_render_target_diag_count{};
++    static u32 v51_render_target_generation{};
++    const u32 v51_render_target_current_generation = MinecraftSplitScreenDiagnosticsGeneration();
++    if (v51_render_target_current_generation != v51_render_target_generation) {
++        v51_render_target_generation = v51_render_target_current_generation;
++        v49_render_target_diag_count = 0;
++    }
+     const auto v49_log_render_targets = [&](const char* phase) {
+         if (!MinecraftSplitScreenDiagnosticsActive() || v49_render_target_diag_count >= 480) {
+             return;
+@@ -2731,6 +2737,12 @@ void TextureCache<P>::SynchronizeAliases(ImageId image_id) {
+     const auto& resolution = Settings::values.resolution_info;
+     static u32 v29_alias_sample_diag_count{};
+     static u32 v49_alias_diag_count{};
++    static u32 v51_alias_generation{};
++    const u32 v51_alias_current_generation = MinecraftSplitScreenDiagnosticsGeneration();
++    if (v51_alias_current_generation != v51_alias_generation) {
++        v51_alias_generation = v51_alias_current_generation;
++        v49_alias_diag_count = 0;
++    }
+     const auto copy_alias = [&](const AliasedImage& aliased) {
+         Image& source = slot_images[aliased.id];
+         if (MinecraftSplitScreenDiagnosticsActive() && v49_alias_diag_count < 240) {
