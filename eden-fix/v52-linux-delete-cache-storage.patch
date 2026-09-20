@@ -1,0 +1,40 @@
+diff --git a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+--- a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
++++ b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+@@ -73,7 +73,7 @@ FSP_SRV::FSP_SRV(Core::System& system_)
+         {30, nullptr, "OpenGameCardStorage"},
+         {31, nullptr, "OpenGameCardFileSystem"},
+         {32, D<&FSP_SRV::ExtendSaveDataFileSystem>, "ExtendSaveDataFileSystem"},
+-        {33, nullptr, "DeleteCacheStorage"},
++        {33, D<&FSP_SRV::DeleteCacheStorage>, "DeleteCacheStorage"},
+         {34, D<&FSP_SRV::GetCacheStorageSize>, "GetCacheStorageSize"},
+         {35, nullptr, "CreateSaveDataFileSystemByHashSalt"},
+         {36, nullptr, "OpenHostFileSystemWithOption"},
+@@ -363,6 +363,17 @@ Result FSP_SRV::ExtendSaveDataFileSystem(FileSys::SaveDataSpaceId space_id, u64
+     R_SUCCEED();
+ }
+ 
++Result FSP_SRV::DeleteCacheStorage(u16 index) {
++    LOG_WARNING(Service_FS,
++                "V52_FIX DeleteCacheStorage index={} program_id={:016X} action=acknowledge_only",
++                index, program_id);
++
++    // Preserve Eden's v31-v38 persistent cache directory and metadata. Minecraft only needs this
++    // IPC request to complete successfully here; actual cache deletion is intentionally deferred.
++    R_SUCCEED();
++}
++
+ Result FSP_SRV::GetCacheStorageSize(s32 index, Out<s64> out_data_size, Out<s64> out_journal_size) {
+     const auto size = save_data_controller->ReadSaveDataSize(
+         FileSys::SaveDataType::Cache, program_id, u128{});
+diff --git a/src/core/hle/service/filesystem/fsp/fsp_srv.h b/src/core/hle/service/filesystem/fsp/fsp_srv.h
+--- a/src/core/hle/service/filesystem/fsp/fsp_srv.h
++++ b/src/core/hle/service/filesystem/fsp/fsp_srv.h
+@@ -105,6 +105,7 @@ private:
+     Result OpenMultiCommitManager(OutInterface<IMultiCommitManager> out_interface);
+     Result ExtendSaveDataFileSystem(FileSys::SaveDataSpaceId space_id, u64 save_data_id,
+                                     s64 available_size, s64 journal_size);
++    Result DeleteCacheStorage(u16 index);
+     Result GetCacheStorageSize(s32 index, Out<s64> out_data_size, Out<s64> out_journal_size);
+ 
+     FileSystemController& fsc;
