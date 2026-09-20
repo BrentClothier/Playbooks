@@ -1,0 +1,70 @@
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -577,6 +577,19 @@
+         ++v49_clear_diag_count;
+     }
+ 
++    const auto& v53_scissor = regs.scissor_test[0];
++    const bool v53_minecraft_half_screen_clear =
++        VideoCommon::MinecraftSplitScreenDiagnosticsActive() && render_area.width == 1280 &&
++        render_area.height == 720 && static_cast<u32>(v53_scissor.enable) != 0 &&
++        static_cast<u32>(v53_scissor.min_x) == 0 &&
++        static_cast<u32>(v53_scissor.max_x) == 1280 &&
++        ((static_cast<u32>(v53_scissor.min_y) == 0 &&
++          static_cast<u32>(v53_scissor.max_y) == 360) ||
++         (static_cast<u32>(v53_scissor.min_y) == 360 &&
++          static_cast<u32>(v53_scissor.max_y) == 720));
++    const bool v53_effective_use_scissor =
++        regs.clear_control.use_scissor || v53_minecraft_half_screen_clear;
++
+     constexpr bool ENABLE_DEFERRED_CLEAR = true;
+     const bool color_full_channels = regs.clear_surface.R && regs.clear_surface.G &&
+                                      regs.clear_surface.B && regs.clear_surface.A;
+@@ -586,7 +599,7 @@
+     const bool ds_deferrable =
+         !ds_used || ((!framebuffer->HasAspectDepthBit() || use_depth) &&
+                      (!framebuffer->HasAspectStencilBit() || use_stencil) && !stencil_partial);
+-    const bool can_defer_clear = ENABLE_DEFERRED_CLEAR && !regs.clear_control.use_scissor &&
++    const bool can_defer_clear = ENABLE_DEFERRED_CLEAR && !v53_effective_use_scissor &&
+                                  regs.clear_surface.layer == 0 &&
+                                  !scheduler.IsRenderPassActive() &&
+                                  (!use_color || color_full_channels) && ds_deferrable;
+@@ -611,8 +624,8 @@
+     default_scissor.extent.height = (std::numeric_limits<s32>::max)();
+ 
+     VkClearRect clear_rect{
+-        .rect = regs.clear_control.use_scissor ? GetScissorState(regs, 0, up_scale, down_shift)
+-                                               : default_scissor,
++        .rect = v53_effective_use_scissor ? GetScissorState(regs, 0, up_scale, down_shift)
++                                          : default_scissor,
+         .baseArrayLayer = regs.clear_surface.layer,
+         .layerCount = layer_count,
+     };
+@@ -659,6 +672,27 @@
+         return;
+     }
+ 
++    if (v53_minecraft_half_screen_clear && !regs.clear_control.use_scissor) {
++        static u32 v53_half_screen_clear_count{};
++        if (v53_half_screen_clear_count < 480) {
++            LOG_WARNING(Render_Vulkan,
++                        "V53_FIX HalfScreenClearCompat count={} generation={} "
++                        "control=(clear_rect={},scissor={},viewport_clip0={}) "
++                        "reg_scissor=({},{},{},{},{}) clear_rect=({},{},{}x{}) rt0_addr={:#x}",
++                        v53_half_screen_clear_count,
++                        VideoCommon::MinecraftSplitScreenDiagnosticsGeneration(),
++                        static_cast<u32>(regs.clear_control.use_clear_rect),
++                        static_cast<u32>(regs.clear_control.use_scissor),
++                        static_cast<u32>(regs.clear_control.use_viewport_clip0),
++                        static_cast<u32>(v53_scissor.enable), static_cast<u32>(v53_scissor.min_x),
++                        static_cast<u32>(v53_scissor.min_y), static_cast<u32>(v53_scissor.max_x),
++                        static_cast<u32>(v53_scissor.max_y), clear_rect.rect.offset.x,
++                        clear_rect.rect.offset.y, clear_rect.rect.extent.width,
++                        clear_rect.rect.extent.height, regs.rt[0].Address());
++            ++v53_half_screen_clear_count;
++        }
++    }
++
+     static u32 v51_clear_decision_diag_count{};
+     static u32 v51_clear_decision_generation{};
+     const u32 v51_clear_decision_current_generation =
