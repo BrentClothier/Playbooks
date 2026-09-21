@@ -1,0 +1,24 @@
+--- a/src/video_core/renderer_vulkan/present/layer.cpp
++++ b/src/video_core/renderer_vulkan/present/layer.cpp
+@@
+-    const bool v20_minecraft_framebuffer =
++    const bool v59_minecraft_docked_framebuffer =
+         framebuffer.width == 1920 && framebuffer.height == 1080 &&
+         framebuffer.stride == 1920 &&
+         framebuffer.pixel_format == Service::android::PixelFormat::Rgba8888;
++
++    // V20 was an early blank-screen diagnostic workaround. Retire that legacy 1080p
++    // raw-display bypass now that the later renderer fixes make accelerated presentation viable.
++    const bool v20_minecraft_framebuffer = false;
++
++    static u32 v59_docked_present_diag_count{};
++    if (v59_minecraft_docked_framebuffer && v59_docked_present_diag_count < 120) {
++        LOG_WARNING(Render_Vulkan,
++                    "V59_FIX DockedAcceleratedPresent frame={} accelerated={} address={:#x} "
++                    "size={}x{} stride={}",
++                    v59_docked_present_diag_count, texture_info.has_value(),
++                    framebuffer.address + framebuffer.offset, framebuffer.width,
++                    framebuffer.height, framebuffer.stride);
++        ++v59_docked_present_diag_count;
++    }
+     if (v20_minecraft_framebuffer) {
