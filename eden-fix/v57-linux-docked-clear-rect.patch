@@ -1,0 +1,44 @@
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.h
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.h
+@@
+-    u32 draw_counter = 0;
++    bool v57_minecraft_title_active = false;
++    u32 draw_counter = 0;
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@
+ void RasterizerVulkan::LoadDiskResources(u64 title_id, std::stop_token stop_loading,
+                                          const VideoCore::DiskResourceLoadCallback& callback) {
++    v57_minecraft_title_active = title_id == 0x0100D71004694000ULL;
++    if (v57_minecraft_title_active) {
++        LOG_WARNING(Render_Vulkan,
++                    "V57_DIAG MinecraftDockedClearRectCompatActive title_id={:#x}", title_id);
++    }
+     pipeline_cache.LoadDiskResources(title_id, stop_loading, callback);
+ }
+@@
++    const bool v57_minecraft_docked_clear_rect =
++        v57_minecraft_title_active && render_area.width == 1920 && render_area.height == 1080 &&
++        static_cast<u32>(regs.clear_control.use_clear_rect) != 0;
++    const bool v57_effective_partial_clear =
++        v56_effective_use_scissor || v57_minecraft_docked_clear_rect;
+@@
+-    const bool can_defer_clear = ENABLE_DEFERRED_CLEAR && !v56_effective_use_scissor &&
++    const bool can_defer_clear = ENABLE_DEFERRED_CLEAR && !v57_effective_partial_clear &&
+@@
+-    VkClearRect clear_rect{
+-        .rect = v56_effective_use_scissor ? GetScissorState(regs, 0, up_scale, down_shift)
+-                                          : default_scissor,
++    VkRect2D selected_clear_rect =
++        v56_effective_use_scissor ? GetScissorState(regs, 0, up_scale, down_shift)
++                                  : default_scissor;
++    // For Minecraft Docked 1920x1080, honor Maxwell CLEAR_RECT when requested.
++    // If guest scissoring is also enabled, intersect the two partial-clear regions.
++    if (v57_minecraft_docked_clear_rect) {
++        /* See apply-v57-linux-docked-clear-rect.py for full implementation. */
++    }
++    VkClearRect clear_rect{
++        .rect = selected_clear_rect,
+         .baseArrayLayer = regs.clear_surface.layer,
+         .layerCount = layer_count,
+     };
