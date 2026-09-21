@@ -101,8 +101,8 @@ env:
   BUILD_TYPE: Release
   LTO: "OFF"
   CCACHE: "OFF"
-  ARTIFACT_REF: minecraft-linux-docked-clear-rect-v57
-  GITHUB_TAG: minecraft-linux-docked-clear-rect-v57
+  ARTIFACT_REF: minecraft-linux-docked-msaa-alias-diag-v58
+  GITHUB_TAG: minecraft-linux-docked-msaa-alias-diag-v58
   B2_PUBLIC_URL: example.invalid
 
 jobs:
@@ -236,7 +236,7 @@ jobs:
             exit 0
           fi
           diagnostic="$(grep -Ei -m 20 'CMake Error|Could NOT find|not found|fatal error|error:' \
-            ../configure-v57.log | tail -n 20 || true)"
+            ../configure-v58.log | tail -n 20 || true)"
           if [ -z "$diagnostic" ]; then
             diagnostic="Configure exited nonzero without an allowlisted diagnostic line."
           fi
@@ -254,7 +254,7 @@ jobs:
           if cmake --build build --parallel "$(nproc)" 2>&1 | tee ../build-v58.log; then
             exit 0
           fi
-          diagnostic="$(grep -Ei -m 40 'fatal error:|error:|undefined reference|collect2: error' ../build-v57.log | tail -n 40 | tr '\r\n' '  ' | sed 's/%/%25/g' || true)"
+          diagnostic="$(grep -Ei -m 40 'fatal error:|error:|undefined reference|collect2: error' ../build-v58.log | tail -n 40 | tr '\r\n' '  ' | sed 's/%/%25/g' || true)"
           if [ -z "$diagnostic" ]; then
             diagnostic="Build exited nonzero without an allowlisted compiler diagnostic line."
           fi
@@ -278,7 +278,7 @@ jobs:
           set -euxo pipefail
           mkdir -p release
           cp eden-src/artifacts/*.AppImage release/Eden-Linux-minecraft-docked-msaa-alias-diag-v58-amd64-gcc-standard.AppImage
-          cp Eden-minecraft-linux-docked-clear-rect-v57-source.tar.xz release/
+          cp Eden-minecraft-linux-docked-msaa-alias-diag-v58-source.tar.xz release/
           for v in 7 9 11 12 14b 15 16 17 18b 18c 19 20 21 22b 23b 24 25 26 27 29 30; do
             cp "eden-fix/apply-v${v}.py" release/
           done
