@@ -1,0 +1,51 @@
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -590,9 +590,22 @@
+          (static_cast<u32>(v53_scissor.min_y) == 360 &&
+           static_cast<u32>(v53_scissor.max_y) == 720));
+-    const bool v53_effective_use_scissor =
+-        regs.clear_control.use_scissor || v53_minecraft_half_screen_clear;
++
++    const bool v56_minecraft_docked_half_screen_clear =
++        VideoCommon::MinecraftSplitScreenDiagnosticsActive() && render_area.width == 1920 &&
++        render_area.height == 1080 && static_cast<u32>(v53_scissor.enable) != 0 &&
++        static_cast<u32>(v53_scissor.min_x) == 0 &&
++        static_cast<u32>(v53_scissor.max_x) == 1920 &&
++        ((static_cast<u32>(v53_scissor.min_y) == 0 &&
++          static_cast<u32>(v53_scissor.max_y) == 540) ||
++         (static_cast<u32>(v53_scissor.min_y) == 540 &&
++          static_cast<u32>(v53_scissor.max_y) == 1080));
++    const bool v56_minecraft_half_screen_clear =
++        v53_minecraft_half_screen_clear || v56_minecraft_docked_half_screen_clear;
++    const bool v56_effective_use_scissor =
++        regs.clear_control.use_scissor || v56_minecraft_half_screen_clear;
+@@
+-    const bool can_defer_clear = ENABLE_DEFERRED_CLEAR && !v53_effective_use_scissor &&
++    const bool can_defer_clear = ENABLE_DEFERRED_CLEAR && !v56_effective_use_scissor &&
+@@
+-        .rect = v53_effective_use_scissor ? GetScissorState(regs, 0, up_scale, down_shift)
++        .rect = v56_effective_use_scissor ? GetScissorState(regs, 0, up_scale, down_shift)
+                                           : default_scissor,
+@@
++    if (v56_minecraft_docked_half_screen_clear && !regs.clear_control.use_scissor) {
++        static u32 v56_docked_half_screen_clear_count{};
++        if (v56_docked_half_screen_clear_count < 120) {
++            LOG_WARNING(Render_Vulkan,
++                        "V56_FIX DockedHalfScreenClearCompat count={} generation={} "
++                        "render_area={}x{} control=(clear_rect={},scissor={},viewport_clip0={}) "
++                        "reg_scissor=({},{},{},{},{}) clear_rect=({},{},{}x{}) rt0_addr={:#x}",
++                        v56_docked_half_screen_clear_count,
++                        VideoCommon::MinecraftSplitScreenDiagnosticsGeneration(),
++                        render_area.width, render_area.height,
++                        static_cast<u32>(regs.clear_control.use_clear_rect),
++                        static_cast<u32>(regs.clear_control.use_scissor),
++                        static_cast<u32>(regs.clear_control.use_viewport_clip0),
++                        static_cast<u32>(v53_scissor.enable), static_cast<u32>(v53_scissor.min_x),
++                        static_cast<u32>(v53_scissor.min_y), static_cast<u32>(v53_scissor.max_x),
++                        static_cast<u32>(v53_scissor.max_y), clear_rect.rect.offset.x,
++                        clear_rect.rect.offset.y, clear_rect.rect.extent.width,
++                        clear_rect.rect.extent.height, regs.rt[0].Address());
++            ++v56_docked_half_screen_clear_count;
++        }
++    }
++
