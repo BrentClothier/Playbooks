@@ -283,7 +283,7 @@ jobs:
           set -euxo pipefail
           mkdir -p release
           cp eden-src/artifacts/*.AppImage release/Eden-Linux-minecraft-docked-accelerated-present-v59-amd64-gcc-standard.AppImage
-          cp Eden-minecraft-linux-docked-msaa-alias-diag-v58-source.tar.xz release/
+          cp Eden-minecraft-linux-docked-accelerated-present-v59-source.tar.xz release/
           for v in 7 9 11 12 14b 15 16 17 18b 18c 19 20 21 22b 23b 24 25 26 27 29 30; do
             cp "eden-fix/apply-v${v}.py" release/
           done
