@@ -1,0 +1,109 @@
+--- a/src/core/file_sys/errors.h
++++ b/src/core/file_sys/errors.h
+@@ -9,6 +9,7 @@
+ 
+ constexpr Result ResultPathNotFound{ErrorModule::FS, 1};
+ constexpr Result ResultPathAlreadyExists{ErrorModule::FS, 2};
++constexpr Result ResultUsableSpaceNotEnough{ErrorModule::FS, 39};
+ constexpr Result ResultUnsupportedSdkVersion{ErrorModule::FS, 50};
+ constexpr Result ResultPartitionNotFound{ErrorModule::FS, 1001};
+ constexpr Result ResultTargetNotFound{ErrorModule::FS, 1002};
+--- a/src/core/file_sys/vfs/vfs.h
++++ b/src/core/file_sys/vfs/vfs.h
+@@ -118,6 +118,9 @@
+     // The primary method of writing to the file. Writes length bytes from data starting at offset
+     // into file. Returns number of bytes successfully written.
+     virtual std::size_t Write(const u8* data, std::size_t length, std::size_t offset = 0) = 0;
++    // Flushes buffered host data when the backing implementation supports it. Implementations
++    // without buffered host state may keep the default no-op success behavior.
++    virtual bool Flush();
+ 
+     // Reads exactly one byte at the offset provided, returning std::nullopt on error.
+     virtual std::optional<u8> ReadByte(std::size_t offset = 0) const;
+--- a/src/core/file_sys/vfs/vfs.cpp
++++ b/src/core/file_sys/vfs/vfs.cpp
+@@ -159,6 +159,10 @@
+ 
+ VfsFile::~VfsFile() = default;
+ 
++bool VfsFile::Flush() {
++    return true;
++}
++
+ std::string VfsFile::GetExtension() const {
+     return std::string(Common::FS::GetExtensionFromFilename(GetName()));
+ }
+--- a/src/core/file_sys/vfs/vfs_real.h
++++ b/src/core/file_sys/vfs/vfs_real.h
+@@ -92,6 +92,7 @@
+     bool IsReadable() const override;
+     std::size_t Read(u8* data, std::size_t length, std::size_t offset) const override;
+     std::size_t Write(const u8* data, std::size_t length, std::size_t offset) override;
++    bool Flush() override;
+     bool Rename(std::string_view name) override;
+ 
+ private:
+--- a/src/core/file_sys/vfs/vfs_real.cpp
++++ b/src/core/file_sys/vfs/vfs_real.cpp
+@@ -349,6 +349,11 @@
+     return reference->file->WriteSpan(std::span{data, length});
+ }
+ 
++bool RealVfsFile::Flush() {
++    auto lk = base.RefreshReference(path, perms, *reference);
++    return reference->file && reference->file->Flush();
++}
++
+ bool RealVfsFile::Rename(std::string_view name) {
+     return base.MoveFile(path, parent_path + '/' + std::string(name)) != nullptr;
+ }
+--- a/src/core/file_sys/fsa/fs_i_file.h
++++ b/src/core/file_sys/fsa/fs_i_file.h
+@@ -140,7 +140,7 @@
+     }
+ 
+     Result DoFlush() {
+-        // Exists for SDK compatibiltity -- No need to flush file.
++        R_UNLESS(backend->Flush(), ResultUsableSpaceNotEnough);
+         R_SUCCEED();
+     }
+ 
+--- a/src/core/hle/service/am/frontend/applet_profile_select.cpp
++++ b/src/core/hle/service/am/frontend/applet_profile_select.cpp
+@@ -94,13 +94,32 @@
+         break;
+     }
+ 
+-    LOG_INFO(Service_AM,
++    auto& profile_manager = system.GetProfileManager();
++    if (system.GetApplicationProcessProgramID() == 0x0100D71004694000ULL &&
++        parameters.display_options.additional_select && profile_manager.GetOpenUserCount() >= 2) {
++        Common::UUID primary_user{};
++        if (const auto configured_user =
++                profile_manager.GetUser(Settings::values.current_user.GetValue())) {
++            primary_user = *configured_user;
++            for (const auto& open_user : profile_manager.GetOpenUsers()) {
++                if (open_user.IsValid() && open_user != primary_user) {
++                    profile_manager.CloseUser(open_user);
++                }
++            }
++            if (primary_user.IsValid()) {
++                profile_manager.OpenUser(primary_user);
++            }
++        }
++        LOG_WARNING(Service_AM,
++                    "V55_FIX ResetAdditionalUserSession primary_uuid={} open_count_after={}",
++                    primary_user.FormattedString(), profile_manager.GetOpenUserCount());
++    }
++
++    LOG_INFO(Service_AM,
+              "V40_FIX ProfileSelectConfig version={} mode={} purpose={} additional_select={} "
+              "registration_permitted={} open_count={}",
+              static_cast<u32>(profile_select_version), static_cast<u32>(parameters.mode),
+              static_cast<u32>(parameters.purpose), parameters.display_options.additional_select,
+              parameters.display_options.is_registration_permitted,
+-             system.GetProfileManager().GetOpenUserCount());
++             profile_manager.GetOpenUserCount());
+ 
+     frontend.SelectProfile([this](std::optional<Common::UUID> uuid) { SelectionComplete(uuid); },
+                            parameters);
