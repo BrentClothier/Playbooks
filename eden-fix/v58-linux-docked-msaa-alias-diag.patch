@@ -1,0 +1,30 @@
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@
+-    const bool v57_minecraft_docked_clear_rect =
++    const bool v57_minecraft_docked_clear_rect =
+         v57_minecraft_title_active && render_area.width == 1920 && render_area.height == 1080 &&
+-        static_cast<u32>(regs.clear_control.use_clear_rect) != 0;
++        static_cast<u32>(regs.clear_control.use_clear_rect) != 0 &&
++        (static_cast<u32>(regs.clear_rect.x_min) != 0 ||
++         static_cast<u32>(regs.clear_rect.y_min) != 0 ||
++         static_cast<u32>(regs.clear_rect.x_max) < render_area.width ||
++         static_cast<u32>(regs.clear_rect.y_max) < render_area.height);
+--- a/src/video_core/texture_cache/texture_cache.h
++++ b/src/video_core/texture_cache/texture_cache.h
+@@
++            // V58_DIAG traces different-sample alias synchronization geometry.
+             const std::span<const ImageCopy> copies{aliased.copies.data(), aliased.copies.size()};
+--- a/src/video_core/texture_cache/image_base.cpp
++++ b/src/video_core/texture_cache/image_base.cpp
+@@
+     if (lhs.info.num_samples != rhs.info.num_samples) {
++        // V58_DIAG traces sample-alias creation geometry.
+         static u32 v30_sample_alias_diag_count{};
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@
+ void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
+                                         std::span<const VideoCommon::ImageCopy> copies) {
++    // V58_DIAG traces Vulkan CopyImageMSAA geometry.
+     const bool msaa_to_non_msaa = src.info.num_samples > 1 && dst.info.num_samples == 1;
