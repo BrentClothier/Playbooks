@@ -12,23 +12,28 @@ def rep(path, old, new, label):
 
 rep(
     "src/video_core/renderer_vulkan/present/layer.cpp",
-    """    const bool v20_minecraft_framebuffer =
-        framebuffer.width == 1920 && framebuffer.height == 1080 &&
-        framebuffer.stride == 1920 &&
+    """    static u32 v20_display_count{};
+    const bool v20_minecraft_framebuffer =
+        ((framebuffer.width == 1920 && framebuffer.height == 1080 &&
+          framebuffer.stride == 1920) ||
+         (framebuffer.width == 1280 && framebuffer.height == 720 &&
+          framebuffer.stride == 1280)) &&
         framebuffer.pixel_format == Service::android::PixelFormat::Rgba8888;
     if (v20_minecraft_framebuffer) {
 """,
-    """    const bool v59_minecraft_docked_framebuffer =
+    """    static u32 v20_display_count{};
+    const bool v59_minecraft_docked_framebuffer =
         framebuffer.width == 1920 && framebuffer.height == 1080 &&
         framebuffer.stride == 1920 &&
         framebuffer.pixel_format == Service::android::PixelFormat::Rgba8888;
 
-    // V20 was an early blank-screen diagnostic workaround. It synchronously downloaded every
-    // Docked framebuffer, discarded the accelerated display image, and forced Eden's raw CPU
-    // upload path. Later v26-v30 renderer fixes made the accelerated path functional, while the
-    // V20 workaround remained active only at 1920x1080. Retire that legacy bypass so Docked uses
-    // the same accelerated presentation path as the known-good Handheld mode.
-    const bool v20_minecraft_framebuffer = false;
+    // Preserve the known-good Handheld raw-display compatibility path, but retire the old
+    // forced raw path for Docked 1920x1080. If AccelerateDisplay is unavailable, Eden's normal
+    // !use_accelerated fallback below still uploads the raw framebuffer.
+    const bool v20_minecraft_framebuffer =
+        framebuffer.width == 1280 && framebuffer.height == 720 &&
+        framebuffer.stride == 1280 &&
+        framebuffer.pixel_format == Service::android::PixelFormat::Rgba8888;
 
     static u32 v59_docked_present_diag_count{};
     if (v59_minecraft_docked_framebuffer && v59_docked_present_diag_count < 120) {
@@ -43,7 +48,7 @@ rep(
 
     if (v20_minecraft_framebuffer) {
 """,
-    "retire legacy v20 Docked raw-framebuffer fallback",
+    "retire legacy v20 raw-display fallback only for Docked 1920x1080",
 )
 
 print("applied v59 Docked accelerated presentation restore")

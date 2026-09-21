@@ -1,15 +1,23 @@
 --- a/src/video_core/renderer_vulkan/present/layer.cpp
 +++ b/src/video_core/renderer_vulkan/present/layer.cpp
 @@
--    const bool v20_minecraft_framebuffer =
+     static u32 v20_display_count{};
 +    const bool v59_minecraft_docked_framebuffer =
-         framebuffer.width == 1920 && framebuffer.height == 1080 &&
-         framebuffer.stride == 1920 &&
-         framebuffer.pixel_format == Service::android::PixelFormat::Rgba8888;
++        framebuffer.width == 1920 && framebuffer.height == 1080 &&
++        framebuffer.stride == 1920 &&
++        framebuffer.pixel_format == Service::android::PixelFormat::Rgba8888;
 +
-+    // V20 was an early blank-screen diagnostic workaround. Retire that legacy 1080p
-+    // raw-display bypass now that the later renderer fixes make accelerated presentation viable.
-+    const bool v20_minecraft_framebuffer = false;
++    // Preserve the known-good Handheld raw-display compatibility path, but retire the old
++    // forced raw path for Docked 1920x1080. If AccelerateDisplay is unavailable, Eden's normal
++    // !use_accelerated fallback below still uploads the raw framebuffer.
+     const bool v20_minecraft_framebuffer =
+-        ((framebuffer.width == 1920 && framebuffer.height == 1080 &&
+-          framebuffer.stride == 1920) ||
+-         (framebuffer.width == 1280 && framebuffer.height == 720 &&
+-          framebuffer.stride == 1280)) &&
++        framebuffer.width == 1280 && framebuffer.height == 720 &&
++        framebuffer.stride == 1280 &&
+         framebuffer.pixel_format == Service::android::PixelFormat::Rgba8888;
 +
 +    static u32 v59_docked_present_diag_count{};
 +    if (v59_minecraft_docked_framebuffer && v59_docked_present_diag_count < 120) {
@@ -21,4 +29,5 @@
 +                    framebuffer.height, framebuffer.stride);
 +        ++v59_docked_present_diag_count;
 +    }
++
      if (v20_minecraft_framebuffer) {
