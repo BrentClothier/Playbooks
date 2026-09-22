@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Any
 
@@ -654,6 +655,109 @@ async def portainer_container_logs(
         raw=True,
     )
     return decode_docker_logs(data)
+
+
+@mcp.tool
+async def portainer_stack_logs(
+    stack_id: int,
+    tail: int = 200,
+    timestamps: bool = True,
+) -> Any:
+    """
+    Return recent logs from every container belonging to a Portainer stack.
+
+    The stack is resolved to its Portainer environment, then containers are
+    matched by the Docker Compose project label. Logs are returned per container.
+    """
+    safe_tail = max(1, min(tail, 2000))
+    stack = await portainer_get(f"/stacks/{stack_id}")
+
+    if not isinstance(stack, dict):
+        return stack
+
+    environment_id = stack.get("EndpointId")
+    stack_name = stack.get("Name")
+
+    if not environment_id or not stack_name:
+        raise RuntimeError(
+            "Portainer stack response did not include EndpointId and Name."
+        )
+
+    filters = json.dumps(
+        {
+            "label": [
+                f"com.docker.compose.project={stack_name}",
+            ]
+        }
+    )
+
+    containers = await portainer_get(
+        f"/endpoints/{environment_id}/docker/containers/json",
+        params={
+            "all": "true",
+            "filters": filters,
+        },
+    )
+
+    if not isinstance(containers, list):
+        return {
+            "stack_id": stack_id,
+            "stack_name": stack_name,
+            "environment_id": environment_id,
+            "containers": containers,
+        }
+
+    results = []
+    for container in containers:
+        container_id = container.get("Id")
+        names = container.get("Names") or []
+        container_name = (
+            names[0].lstrip("/")
+            if names
+            else container_id
+        )
+
+        if not container_id:
+            continue
+
+        try:
+            data = await portainer_get(
+                f"/endpoints/{environment_id}/docker/containers/"
+                f"{container_id}/logs",
+                params={
+                    "stdout": "true",
+                    "stderr": "true",
+                    "timestamps": "true" if timestamps else "false",
+                    "tail": str(safe_tail),
+                },
+                raw=True,
+            )
+            results.append(
+                {
+                    "container_id": container_id[:12],
+                    "container_name": container_name,
+                    "state": container.get("State"),
+                    "status": container.get("Status"),
+                    "logs": decode_docker_logs(data),
+                }
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "container_id": container_id[:12],
+                    "container_name": container_name,
+                    "state": container.get("State"),
+                    "status": container.get("Status"),
+                    "error": str(exc),
+                }
+            )
+
+    return {
+        "stack_id": stack_id,
+        "stack_name": stack_name,
+        "environment_id": environment_id,
+        "containers": results,
+    }
 
 
 if __name__ == "__main__":
