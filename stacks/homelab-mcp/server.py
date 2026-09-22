@@ -188,6 +188,86 @@ async def portainer_get(
         return response.json()
 
 
+async def portainer_post(
+    path: str,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    """Make an authenticated state-changing POST request through Portainer."""
+    if not portainer_ready():
+        raise RuntimeError(
+            "Portainer is not configured. Set PORTAINER_URL and "
+            "PORTAINER_API_TOKEN in the HomeLab MCP container."
+        )
+
+    headers = {
+        "X-API-Key": PORTAINER_API_TOKEN,
+        "Accept": "application/json",
+    }
+
+    async with httpx.AsyncClient(
+        base_url=f"{PORTAINER_URL}/api",
+        headers=headers,
+        verify=PORTAINER_VERIFY_SSL,
+        timeout=httpx.Timeout(60.0),
+    ) as client:
+        response = await client.post(path, params=params)
+        response.raise_for_status()
+        if not response.content:
+            return {
+                "ok": True,
+                "status_code": response.status_code,
+            }
+        try:
+            return response.json()
+        except ValueError:
+            return {
+                "ok": True,
+                "status_code": response.status_code,
+                "text": response.text,
+            }
+
+
+async def portainer_put(
+    path: str,
+    params: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
+) -> Any:
+    """Make an authenticated state-changing PUT request to the Portainer API."""
+    if not portainer_ready():
+        raise RuntimeError(
+            "Portainer is not configured. Set PORTAINER_URL and "
+            "PORTAINER_API_TOKEN in the HomeLab MCP container."
+        )
+
+    headers = {
+        "X-API-Key": PORTAINER_API_TOKEN,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(
+        base_url=f"{PORTAINER_URL}/api",
+        headers=headers,
+        verify=PORTAINER_VERIFY_SSL,
+        timeout=httpx.Timeout(120.0),
+    ) as client:
+        response = await client.put(path, params=params, json=payload or {})
+        response.raise_for_status()
+        if not response.content:
+            return {
+                "ok": True,
+                "status_code": response.status_code,
+            }
+        try:
+            return response.json()
+        except ValueError:
+            return {
+                "ok": True,
+                "status_code": response.status_code,
+                "text": response.text,
+            }
+
+
 def decode_docker_logs(data: bytes) -> str:
     """
     Decode Docker log output.
@@ -581,7 +661,7 @@ async def semaphore_run_template(
 
 
 # -------------------------
-# Portainer read-only tools
+# Portainer tools
 # -------------------------
 
 @mcp.tool
@@ -757,6 +837,133 @@ async def portainer_stack_logs(
         "stack_name": stack_name,
         "environment_id": environment_id,
         "containers": results,
+    }
+
+
+@mcp.tool
+async def portainer_restart_container(
+    environment_id: int,
+    container_id: str,
+    timeout_seconds: int = 10,
+) -> Any:
+    """
+    Restart a Docker container through Portainer.
+
+    This is a state-changing operation. timeout_seconds is capped at 120.
+    """
+    safe_timeout = max(0, min(timeout_seconds, 120))
+    result = await portainer_post(
+        f"/endpoints/{environment_id}/docker/containers/"
+        f"{container_id}/restart",
+        params={"t": safe_timeout},
+    )
+    return {
+        "action": "restart",
+        "environment_id": environment_id,
+        "container_id": container_id,
+        "timeout_seconds": safe_timeout,
+        "result": result,
+    }
+
+
+@mcp.tool
+async def portainer_start_container(
+    environment_id: int,
+    container_id: str,
+) -> Any:
+    """Start a stopped Docker container through Portainer."""
+    result = await portainer_post(
+        f"/endpoints/{environment_id}/docker/containers/"
+        f"{container_id}/start"
+    )
+    return {
+        "action": "start",
+        "environment_id": environment_id,
+        "container_id": container_id,
+        "result": result,
+    }
+
+
+@mcp.tool
+async def portainer_stop_container(
+    environment_id: int,
+    container_id: str,
+    timeout_seconds: int = 10,
+) -> Any:
+    """
+    Stop a Docker container through Portainer.
+
+    This is a state-changing operation. timeout_seconds is capped at 120.
+    """
+    safe_timeout = max(0, min(timeout_seconds, 120))
+    result = await portainer_post(
+        f"/endpoints/{environment_id}/docker/containers/"
+        f"{container_id}/stop",
+        params={"t": safe_timeout},
+    )
+    return {
+        "action": "stop",
+        "environment_id": environment_id,
+        "container_id": container_id,
+        "timeout_seconds": safe_timeout,
+        "result": result,
+    }
+
+
+@mcp.tool
+async def portainer_redeploy_stack(
+    stack_id: int,
+    pull_images: bool = True,
+    prune: bool = False,
+    force_redeploy: bool = True,
+) -> Any:
+    """
+    Pull and redeploy a Git-backed Portainer stack.
+
+    By default this pulls current images and forces a redeploy. The operation
+    does not delete volumes. It will fail if the selected stack is not backed
+    by a Git repository.
+    """
+    stack = await portainer_get(f"/stacks/{stack_id}")
+    if not isinstance(stack, dict):
+        return stack
+
+    environment_id = stack.get("EndpointId")
+    stack_name = stack.get("Name")
+
+    if not environment_id:
+        raise RuntimeError(
+            "Portainer stack response did not include an EndpointId."
+        )
+
+    try:
+        result = await portainer_put(
+            f"/stacks/{stack_id}/git/redeploy",
+            params={"endpointId": environment_id},
+            payload={
+                "PullImage": pull_images,
+                "Prune": prune,
+                "RepullImageAndRedeploy": force_redeploy,
+            },
+        )
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:1000]
+        raise RuntimeError(
+            f"Portainer could not redeploy stack {stack_id}. "
+            f"The stack may not be Git-backed or the API token may not "
+            f"have permission. Portainer returned "
+            f"{exc.response.status_code}: {detail}"
+        ) from exc
+
+    return {
+        "action": "redeploy_stack",
+        "stack_id": stack_id,
+        "stack_name": stack_name,
+        "environment_id": environment_id,
+        "pull_images": pull_images,
+        "prune": prune,
+        "force_redeploy": force_redeploy,
+        "result": result,
     }
 
 
