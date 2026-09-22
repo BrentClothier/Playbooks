@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 
 def rep(path, old, new, label):
@@ -175,28 +176,24 @@ rep(
     "route FSA Commit to mounted VFS",
 )
 
-rep(
-    "src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp",
-    """Result IFileSystem::Commit() {
-    LOG_WARNING(Service_FS, "(STUBBED) called");
-
-    R_SUCCEED();
-}
-""",
-    """Result IFileSystem::Commit() {
+p = Path("src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp")
+text = p.read_text()
+pattern = r"Result IFileSystem::Commit\(\) \{\n.*?\n\}"
+replacement = """Result IFileSystem::Commit() {
     R_RETURN(backend->Commit());
-}
-""",
-    "replace service filesystem Commit stub",
-)
+}"""
+text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+if count != 1:
+    raise RuntimeError(
+        f"replace service filesystem Commit stub: expected 1 function match in {p}, found {count}"
+    )
+p.write_text(text)
+print(f"updated {p}: replace service filesystem Commit stub")
 
 rep(
     "src/core/hle/service/am/frontend/applet_profile_select.cpp",
     """        profile_manager.OpenUser(*uuid);
         const auto open_count_after = profile_manager.GetOpenUserCount();
-
-        LOG_DEBUG(Service_AM,
-                 "V41_FIX OpenSelectedUsers primary_uuid={} selected_uuid={} "
 """,
     """        profile_manager.OpenUser(*uuid);
         const auto open_count_after = profile_manager.GetOpenUserCount();
@@ -211,9 +208,6 @@ rep(
                         profile_manager.GetLastOpenedUser().FormattedString());
             ++v60_profile_complete_diag_count;
         }
-
-        LOG_DEBUG(Service_AM,
-                 "V41_FIX OpenSelectedUsers primary_uuid={} selected_uuid={} "
 """,
     "trace additional-user completion after stale-session reset",
 )
@@ -221,9 +215,6 @@ rep(
 rep(
     "src/core/hle/service/acc/acc.cpp",
     """    const auto open_users = profile_manager->GetOpenUsers();
-    LOG_DEBUG(Service_ACC, "V41_FIX ListOpenUsers count={} last_opened={}",
-             profile_manager->GetOpenUserCount(),
-             profile_manager->GetLastOpenedUser().FormattedString());
 """,
     """    const auto open_users = profile_manager->GetOpenUsers();
     static u32 v60_list_open_users_diag_count{};
@@ -233,9 +224,6 @@ rep(
                     profile_manager->GetLastOpenedUser().FormattedString());
         ++v60_list_open_users_diag_count;
     }
-    LOG_DEBUG(Service_ACC, "V41_FIX ListOpenUsers count={} last_opened={}",
-             profile_manager->GetOpenUserCount(),
-             profile_manager->GetLastOpenedUser().FormattedString());
 """,
     "trace Minecraft-visible open-user state",
 )
