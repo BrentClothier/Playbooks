@@ -20,6 +20,10 @@ services:
       - PORTAINER_API_TOKEN=${PORTAINER_API_TOKEN:-}
       - PORTAINER_VERIFY_SSL=${PORTAINER_VERIFY_SSL:-true}
 
+      - UNIFI_URL=${UNIFI_URL:-}
+      - UNIFI_API_KEY=${UNIFI_API_KEY:-}
+      - UNIFI_VERIFY_SSL=${UNIFI_VERIFY_SSL:-true}
+
     ports:
       - "127.0.0.1:${MCP_HTTP_PORT:-8765}:8000"
 

@@ -44,6 +44,16 @@ PORTAINER_VERIFY_SSL = os.getenv("PORTAINER_VERIFY_SSL", "true").lower() in {
     "on",
 }
 
+# UniFi Network local Integration API (optional until configured)
+UNIFI_URL = os.getenv("UNIFI_URL", "").rstrip("/")
+UNIFI_API_KEY = os.getenv("UNIFI_API_KEY", "")
+UNIFI_VERIFY_SSL = os.getenv("UNIFI_VERIFY_SSL", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 
 async def pve_get(path: str, params: dict[str, Any] | None = None) -> Any:
     """Make an authenticated read-only request to the Proxmox VE API."""
@@ -268,6 +278,51 @@ async def portainer_put(
             }
 
 
+def unifi_ready() -> bool:
+    return bool(UNIFI_URL and UNIFI_API_KEY)
+
+
+def unifi_api_base_url() -> str:
+    """
+    Return the base URL for the official local UniFi Network Integration API.
+
+    UNIFI_URL may be either the console root, such as https://192.168.1.1,
+    or the full Network Integration base ending in /proxy/network/integration.
+    """
+    if UNIFI_URL.endswith("/proxy/network/integration"):
+        return UNIFI_URL
+    return f"{UNIFI_URL}/proxy/network/integration"
+
+
+async def unifi_get(
+    path: str,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    """Make an authenticated read-only request to the local UniFi Network API."""
+    if not unifi_ready():
+        raise RuntimeError(
+            "UniFi is not configured. Set UNIFI_URL and UNIFI_API_KEY "
+            "in the HomeLab MCP container."
+        )
+
+    headers = {
+        "X-API-Key": UNIFI_API_KEY,
+        "Accept": "application/json",
+    }
+
+    async with httpx.AsyncClient(
+        base_url=unifi_api_base_url(),
+        headers=headers,
+        verify=UNIFI_VERIFY_SSL,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+        if not response.content:
+            return None
+        return response.json()
+
+
 def decode_docker_logs(data: bytes) -> str:
     """
     Decode Docker log output.
@@ -326,6 +381,7 @@ async def health_check(request):
                 else len(semaphore_allowed_template_pairs())
             ),
             "portainer_configured": portainer_ready(),
+            "unifi_configured": unifi_ready(),
         }
     )
 
@@ -338,6 +394,8 @@ async def homelab_mcp_info() -> dict[str, Any]:
         integrations.append("semaphore")
     if portainer_ready():
         integrations.append("portainer")
+    if unifi_ready():
+        integrations.append("unifi")
 
     return {
         "name": "HomeLab MCP",
@@ -364,6 +422,9 @@ async def homelab_mcp_info() -> dict[str, Any]:
         "portainer_configured": portainer_ready(),
         "portainer_base_url": PORTAINER_URL if PORTAINER_URL else None,
         "portainer_ssl_verification": PORTAINER_VERIFY_SSL,
+        "unifi_configured": unifi_ready(),
+        "unifi_base_url": unifi_api_base_url() if UNIFI_URL else None,
+        "unifi_ssl_verification": UNIFI_VERIFY_SSL,
     }
 
 
@@ -965,6 +1026,92 @@ async def portainer_redeploy_stack(
         "force_redeploy": force_redeploy,
         "result": result,
     }
+
+
+# -------------------------
+# UniFi Network read-only tools
+# -------------------------
+
+@mcp.tool
+async def unifi_info() -> Any:
+    """
+    Return information about the local UniFi Network application.
+
+    This is useful for confirming connectivity and discovering the installed
+    Network application version before using version-specific features.
+    """
+    return await unifi_get("/v1/info")
+
+
+@mcp.tool
+async def unifi_sites(limit: int = 100) -> Any:
+    """
+    List local UniFi Network sites.
+
+    The returned site ID is required for device and client queries.
+    """
+    safe_limit = max(1, min(limit, 200))
+    return await unifi_get(
+        "/v1/sites",
+        params={"offset": 0, "limit": safe_limit},
+    )
+
+
+@mcp.tool
+async def unifi_devices(site_id: str, limit: int = 200) -> Any:
+    """
+    List adopted UniFi devices for a site, including gateways, switches,
+    and access points.
+    """
+    safe_limit = max(1, min(limit, 200))
+    return await unifi_get(
+        f"/v1/sites/{site_id}/devices",
+        params={"offset": 0, "limit": safe_limit},
+    )
+
+
+@mcp.tool
+async def unifi_device(site_id: str, device_id: str) -> Any:
+    """Return detailed information for one adopted UniFi device."""
+    return await unifi_get(
+        f"/v1/sites/{site_id}/devices/{device_id}"
+    )
+
+
+@mcp.tool
+async def unifi_device_statistics(site_id: str, device_id: str) -> Any:
+    """
+    Return the latest statistics for one adopted UniFi device.
+
+    Depending on device type and Network version this can include uptime,
+    traffic rates, CPU load, memory utilization, and other health metrics.
+    """
+    return await unifi_get(
+        f"/v1/sites/{site_id}/devices/{device_id}/statistics/latest"
+    )
+
+
+@mcp.tool
+async def unifi_clients(site_id: str, limit: int = 200) -> Any:
+    """
+    List currently connected clients for a UniFi site.
+
+    This includes wired, wireless, and active VPN clients exposed by the
+    installed Network application.
+    """
+    safe_limit = max(1, min(limit, 200))
+    return await unifi_get(
+        f"/v1/sites/{site_id}/clients",
+        params={"offset": 0, "limit": safe_limit},
+    )
+
+
+@mcp.tool
+async def unifi_client(site_id: str, client_id: str) -> Any:
+    """Return detailed information for one currently connected UniFi client."""
+    return await unifi_get(
+        f"/v1/sites/{site_id}/clients/{client_id}"
+    )
 
 
 if __name__ == "__main__":
