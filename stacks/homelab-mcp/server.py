@@ -358,7 +358,7 @@ def _unescape_cef_value(value: str) -> str:
         value.replace(r"\n", "\n")
         .replace(r"\r", "\r")
         .replace(r"\=", "=")
-        .replace(r"\\", "\")
+        .replace(r"\\", "\\")
     )
 
 
