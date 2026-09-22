@@ -52,16 +52,23 @@ def semaphore_ready() -> bool:
     return bool(SEMAPHORE_URL and SEMAPHORE_API_TOKEN)
 
 
+def semaphore_allow_all_templates() -> bool:
+    return SEMAPHORE_ALLOWED_TEMPLATES_RAW.strip() == "*"
+
+
 def semaphore_allowed_template_pairs() -> set[tuple[int, int]]:
     """
     Parse SEMAPHORE_ALLOWED_TEMPLATES.
 
-    Format: comma-separated project_id:template_id pairs, for example:
+    Use "*" to allow every Semaphore template, including templates created
+    in the future.
+
+    Otherwise use comma-separated project_id:template_id pairs, for example:
     1:2,1:3,1:4
     """
     allowed: set[tuple[int, int]] = set()
     raw = SEMAPHORE_ALLOWED_TEMPLATES_RAW.strip()
-    if not raw:
+    if not raw or raw == "*":
         return allowed
 
     for item in raw.split(","):
@@ -74,7 +81,7 @@ def semaphore_allowed_template_pairs() -> set[tuple[int, int]]:
         except (ValueError, TypeError) as exc:
             raise RuntimeError(
                 "Invalid SEMAPHORE_ALLOWED_TEMPLATES value. "
-                "Use comma-separated project_id:template_id pairs."
+                "Use '*' or comma-separated project_id:template_id pairs."
             ) from exc
 
     return allowed
@@ -141,12 +148,18 @@ async def health_check(request):
             "service": "homelab-mcp",
             "mode": (
                 "controlled-write"
-                if semaphore_allowed_template_pairs()
+                if (
+                    semaphore_allow_all_templates()
+                    or semaphore_allowed_template_pairs()
+                )
                 else "read-only"
             ),
             "semaphore_configured": semaphore_ready(),
-            "semaphore_allowed_template_count": len(
-                semaphore_allowed_template_pairs()
+            "semaphore_allow_all_templates": semaphore_allow_all_templates(),
+            "semaphore_allowed_template_count": (
+                None
+                if semaphore_allow_all_templates()
+                else len(semaphore_allowed_template_pairs())
             ),
         }
     )
@@ -163,7 +176,10 @@ async def homelab_mcp_info() -> dict[str, Any]:
         "name": "HomeLab MCP",
         "mode": (
             "controlled-write"
-            if semaphore_allowed_template_pairs()
+            if (
+                semaphore_allow_all_templates()
+                or semaphore_allowed_template_pairs()
+            )
             else "read-only"
         ),
         "integrations": integrations,
@@ -172,8 +188,11 @@ async def homelab_mcp_info() -> dict[str, Any]:
         "semaphore_configured": semaphore_ready(),
         "semaphore_base_url": SEMAPHORE_URL if SEMAPHORE_URL else None,
         "semaphore_ssl_verification": SEMAPHORE_VERIFY_SSL,
-        "semaphore_allowed_template_count": len(
-            semaphore_allowed_template_pairs()
+        "semaphore_allow_all_templates": semaphore_allow_all_templates(),
+        "semaphore_allowed_template_count": (
+            None
+            if semaphore_allow_all_templates()
+            else len(semaphore_allowed_template_pairs())
         ),
     }
 
@@ -354,6 +373,34 @@ async def semaphore_allowed_templates() -> Any:
     Execution is denied unless a project/template pair appears in the
     SEMAPHORE_ALLOWED_TEMPLATES environment variable.
     """
+    if semaphore_allow_all_templates():
+        projects = await semaphore_get("/projects")
+        results = []
+        if not isinstance(projects, list):
+            return projects
+
+        for project in projects:
+            project_id = project.get("id")
+            if project_id is None:
+                continue
+            templates = await semaphore_get(
+                f"/project/{project_id}/templates",
+                params={"sort": "name", "order": "asc"},
+            )
+            if not isinstance(templates, list):
+                continue
+            for template in templates:
+                results.append(
+                    {
+                        "project_id": project_id,
+                        "template_id": template.get("id"),
+                        "name": template.get("name"),
+                        "playbook": template.get("playbook"),
+                        "app": template.get("app"),
+                    }
+                )
+        return results
+
     allowed = sorted(semaphore_allowed_template_pairs())
     results = []
 
@@ -410,7 +457,10 @@ async def semaphore_run_template(
     and extra arguments are intentionally not accepted by this tool.
     """
     allowed = semaphore_allowed_template_pairs()
-    if (project_id, template_id) not in allowed:
+    if (
+        not semaphore_allow_all_templates()
+        and (project_id, template_id) not in allowed
+    ):
         raise PermissionError(
             f"Semaphore template {project_id}:{template_id} is not allowlisted."
         )
