@@ -25,6 +25,7 @@ PVE_AUTH_HEADER = {
 # Semaphore (optional until configured in Portainer)
 SEMAPHORE_URL = os.getenv("SEMAPHORE_URL", "").rstrip("/")
 SEMAPHORE_API_TOKEN = os.getenv("SEMAPHORE_API_TOKEN", "")
+SEMAPHORE_ALLOWED_TEMPLATES_RAW = os.getenv("SEMAPHORE_ALLOWED_TEMPLATES", "")
 SEMAPHORE_VERIFY_SSL = os.getenv("SEMAPHORE_VERIFY_SSL", "true").lower() in {
     "1",
     "true",
@@ -49,6 +50,34 @@ async def pve_get(path: str, params: dict[str, Any] | None = None) -> Any:
 
 def semaphore_ready() -> bool:
     return bool(SEMAPHORE_URL and SEMAPHORE_API_TOKEN)
+
+
+def semaphore_allowed_template_pairs() -> set[tuple[int, int]]:
+    """
+    Parse SEMAPHORE_ALLOWED_TEMPLATES.
+
+    Format: comma-separated project_id:template_id pairs, for example:
+    1:2,1:3,1:4
+    """
+    allowed: set[tuple[int, int]] = set()
+    raw = SEMAPHORE_ALLOWED_TEMPLATES_RAW.strip()
+    if not raw:
+        return allowed
+
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            project_text, template_text = item.split(":", 1)
+            allowed.add((int(project_text), int(template_text)))
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError(
+                "Invalid SEMAPHORE_ALLOWED_TEMPLATES value. "
+                "Use comma-separated project_id:template_id pairs."
+            ) from exc
+
+    return allowed
 
 
 async def semaphore_get(path: str, params: dict[str, Any] | None = None) -> Any:
@@ -77,14 +106,48 @@ async def semaphore_get(path: str, params: dict[str, Any] | None = None) -> Any:
         return response.json()
 
 
+async def semaphore_post(path: str, payload: dict[str, Any]) -> Any:
+    """Make an authenticated, allowlisted write request to the Semaphore UI API."""
+    if not semaphore_ready():
+        raise RuntimeError(
+            "Semaphore is not configured. Set SEMAPHORE_URL and "
+            "SEMAPHORE_API_TOKEN in the HomeLab MCP container."
+        )
+
+    headers = {
+        "Authorization": f"Bearer {SEMAPHORE_API_TOKEN}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(
+        base_url=f"{SEMAPHORE_URL}/api",
+        headers=headers,
+        verify=SEMAPHORE_VERIFY_SSL,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
+        response = await client.post(path, json=payload)
+        response.raise_for_status()
+        if not response.content:
+            return None
+        return response.json()
+
+
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request):
     return JSONResponse(
         {
             "status": "healthy",
             "service": "homelab-mcp",
-            "mode": "read-only",
+            "mode": (
+                "controlled-write"
+                if semaphore_allowed_template_pairs()
+                else "read-only"
+            ),
             "semaphore_configured": semaphore_ready(),
+            "semaphore_allowed_template_count": len(
+                semaphore_allowed_template_pairs()
+            ),
         }
     )
 
@@ -98,13 +161,20 @@ async def homelab_mcp_info() -> dict[str, Any]:
 
     return {
         "name": "HomeLab MCP",
-        "mode": "read-only",
+        "mode": (
+            "controlled-write"
+            if semaphore_allowed_template_pairs()
+            else "read-only"
+        ),
         "integrations": integrations,
         "proxmox_base_url": PVE_URL,
         "proxmox_ssl_verification": PVE_VERIFY_SSL,
         "semaphore_configured": semaphore_ready(),
         "semaphore_base_url": SEMAPHORE_URL if SEMAPHORE_URL else None,
         "semaphore_ssl_verification": SEMAPHORE_VERIFY_SSL,
+        "semaphore_allowed_template_count": len(
+            semaphore_allowed_template_pairs()
+        ),
     }
 
 
@@ -274,6 +344,100 @@ async def semaphore_task_output(
     if isinstance(output, list):
         return output[-safe_limit:]
     return output
+
+
+@mcp.tool
+async def semaphore_allowed_templates() -> Any:
+    """
+    List Semaphore templates that this MCP is permitted to execute.
+
+    Execution is denied unless a project/template pair appears in the
+    SEMAPHORE_ALLOWED_TEMPLATES environment variable.
+    """
+    allowed = sorted(semaphore_allowed_template_pairs())
+    results = []
+
+    for project_id, template_id in allowed:
+        try:
+            template = await semaphore_get(
+                f"/project/{project_id}/templates/{template_id}"
+            )
+            results.append(
+                {
+                    "project_id": project_id,
+                    "template_id": template_id,
+                    "name": (
+                        template.get("name")
+                        if isinstance(template, dict)
+                        else None
+                    ),
+                    "playbook": (
+                        template.get("playbook")
+                        if isinstance(template, dict)
+                        else None
+                    ),
+                    "app": (
+                        template.get("app")
+                        if isinstance(template, dict)
+                        else None
+                    ),
+                }
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "project_id": project_id,
+                    "template_id": template_id,
+                    "error": str(exc),
+                }
+            )
+
+    return results
+
+
+@mcp.tool
+async def semaphore_run_template(
+    project_id: int,
+    template_id: int,
+    message: str = "Started by ChatGPT HomeLab MCP",
+) -> Any:
+    """
+    Start an existing Semaphore task template.
+
+    This is a state-changing operation. It can ONLY run templates explicitly
+    allowlisted in SEMAPHORE_ALLOWED_TEMPLATES. Arbitrary playbooks, shell
+    commands, inventory overrides, branches, tags, limits, survey variables,
+    and extra arguments are intentionally not accepted by this tool.
+    """
+    allowed = semaphore_allowed_template_pairs()
+    if (project_id, template_id) not in allowed:
+        raise PermissionError(
+            f"Semaphore template {project_id}:{template_id} is not allowlisted."
+        )
+
+    template = await semaphore_get(
+        f"/project/{project_id}/templates/{template_id}"
+    )
+
+    safe_message = message.strip()[:500] or "Started by ChatGPT HomeLab MCP"
+    task = await semaphore_post(
+        f"/project/{project_id}/tasks",
+        {
+            "template_id": template_id,
+            "message": safe_message,
+        },
+    )
+
+    return {
+        "started": True,
+        "project_id": project_id,
+        "template_id": template_id,
+        "template_name": (
+            template.get("name") if isinstance(template, dict) else None
+        ),
+        "message": safe_message,
+        "task": task,
+    }
 
 
 if __name__ == "__main__":
