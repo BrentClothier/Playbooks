@@ -1,0 +1,44 @@
+--- a/src/core/file_sys/vfs/vfs.h
++++ b/src/core/file_sys/vfs/vfs.h
+@@
+     virtual bool Flush();
++    virtual bool Commit();
+--- a/src/core/file_sys/vfs/vfs_real.cpp
++++ b/src/core/file_sys/vfs/vfs_real.cpp
+@@
+ bool RealVfsFile::Flush() {
+@@
+ }
++
++bool RealVfsFile::Commit() {
++    auto lk = base.RefreshReference(path, perms, *reference);
++    return reference->file && reference->file->Commit();
++}
+--- a/src/core/file_sys/fsa/fs_i_filesystem.h
++++ b/src/core/file_sys/fsa/fs_i_filesystem.h
+@@
+     Result DoCommit() {
+-        R_THROW(ResultNotImplemented);
++        R_RETURN(backend.Commit());
+     }
+--- a/src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp
++++ b/src/core/hle/service/filesystem/fsp/fs_i_filesystem.cpp
+@@
+ Result IFileSystem::Commit() {
+-    LOG_WARNING(Service_FS, "(STUBBED) called");
+-
+-    R_SUCCEED();
++    R_RETURN(backend->Commit());
+ }
+--- a/src/core/hle/service/filesystem/filesystem.cpp
++++ b/src/core/hle/service/filesystem/filesystem.cpp
+@@
++// V60_FIX recursively commits mounted save files through the host fsync-backed IOFile path.
+--- a/src/core/hle/service/am/frontend/applet_profile_select.cpp
++++ b/src/core/hle/service/am/frontend/applet_profile_select.cpp
+@@
++        // V60_DIAG records the selected second-user state after completion.
+--- a/src/core/hle/service/acc/acc.cpp
++++ b/src/core/hle/service/acc/acc.cpp
+@@
++    // V60_DIAG records the open-user set Minecraft can observe.
