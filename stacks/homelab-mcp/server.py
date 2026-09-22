@@ -33,6 +33,16 @@ SEMAPHORE_VERIFY_SSL = os.getenv("SEMAPHORE_VERIFY_SSL", "true").lower() in {
     "on",
 }
 
+# Portainer (optional until configured in Portainer)
+PORTAINER_URL = os.getenv("PORTAINER_URL", "").rstrip("/")
+PORTAINER_API_TOKEN = os.getenv("PORTAINER_API_TOKEN", "")
+PORTAINER_VERIFY_SSL = os.getenv("PORTAINER_VERIFY_SSL", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 
 async def pve_get(path: str, params: dict[str, Any] | None = None) -> Any:
     """Make an authenticated read-only request to the Proxmox VE API."""
@@ -140,6 +150,79 @@ async def semaphore_post(path: str, payload: dict[str, Any]) -> Any:
         return response.json()
 
 
+def portainer_ready() -> bool:
+    return bool(PORTAINER_URL and PORTAINER_API_TOKEN)
+
+
+async def portainer_get(
+    path: str,
+    params: dict[str, Any] | None = None,
+    *,
+    raw: bool = False,
+) -> Any:
+    """Make an authenticated read-only request to the Portainer API."""
+    if not portainer_ready():
+        raise RuntimeError(
+            "Portainer is not configured. Set PORTAINER_URL and "
+            "PORTAINER_API_TOKEN in the HomeLab MCP container."
+        )
+
+    headers = {
+        "X-API-Key": PORTAINER_API_TOKEN,
+        "Accept": "*/*" if raw else "application/json",
+    }
+
+    async with httpx.AsyncClient(
+        base_url=f"{PORTAINER_URL}/api",
+        headers=headers,
+        verify=PORTAINER_VERIFY_SSL,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+        if raw:
+            return response.content
+        if not response.content:
+            return None
+        return response.json()
+
+
+def decode_docker_logs(data: bytes) -> str:
+    """
+    Decode Docker log output.
+
+    Docker may return raw text for TTY containers or multiplexed frames for
+    non-TTY containers. This strips the 8-byte multiplex headers when present.
+    """
+    if not data:
+        return ""
+
+    chunks: list[bytes] = []
+    offset = 0
+
+    while offset + 8 <= len(data):
+        stream_type = data[offset]
+        if (
+            stream_type not in {0, 1, 2}
+            or data[offset + 1 : offset + 4] != b"\x00\x00\x00"
+        ):
+            break
+
+        size = int.from_bytes(data[offset + 4 : offset + 8], "big")
+        start = offset + 8
+        end = start + size
+        if end > len(data):
+            break
+
+        chunks.append(data[start:end])
+        offset = end
+
+    if chunks and offset == len(data):
+        return b"".join(chunks).decode("utf-8", errors="replace")
+
+    return data.decode("utf-8", errors="replace")
+
+
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request):
     return JSONResponse(
@@ -161,6 +244,7 @@ async def health_check(request):
                 if semaphore_allow_all_templates()
                 else len(semaphore_allowed_template_pairs())
             ),
+            "portainer_configured": portainer_ready(),
         }
     )
 
@@ -171,6 +255,8 @@ async def homelab_mcp_info() -> dict[str, Any]:
     integrations = ["proxmox"]
     if semaphore_ready():
         integrations.append("semaphore")
+    if portainer_ready():
+        integrations.append("portainer")
 
     return {
         "name": "HomeLab MCP",
@@ -194,6 +280,9 @@ async def homelab_mcp_info() -> dict[str, Any]:
             if semaphore_allow_all_templates()
             else len(semaphore_allowed_template_pairs())
         ),
+        "portainer_configured": portainer_ready(),
+        "portainer_base_url": PORTAINER_URL if PORTAINER_URL else None,
+        "portainer_ssl_verification": PORTAINER_VERIFY_SSL,
     }
 
 
@@ -488,6 +577,83 @@ async def semaphore_run_template(
         "message": safe_message,
         "task": task,
     }
+
+
+# -------------------------
+# Portainer read-only tools
+# -------------------------
+
+@mcp.tool
+async def portainer_environments() -> Any:
+    """
+    List Portainer environments/endpoints visible to the configured API token.
+
+    Use the returned environment ID with the container inspection tools.
+    """
+    return await portainer_get("/endpoints")
+
+
+@mcp.tool
+async def portainer_stacks() -> Any:
+    """List Portainer stacks visible to the configured API token."""
+    return await portainer_get("/stacks")
+
+
+@mcp.tool
+async def portainer_containers(
+    environment_id: int,
+    include_stopped: bool = True,
+) -> Any:
+    """
+    List Docker containers in a Portainer environment.
+
+    Set include_stopped=false to return only running containers.
+    """
+    return await portainer_get(
+        f"/endpoints/{environment_id}/docker/containers/json",
+        params={"all": "true" if include_stopped else "false"},
+    )
+
+
+@mcp.tool
+async def portainer_container(
+    environment_id: int,
+    container_id: str,
+) -> Any:
+    """
+    Inspect a Docker container through Portainer.
+
+    container_id may be a full/short Docker ID or an unambiguous container name.
+    """
+    return await portainer_get(
+        f"/endpoints/{environment_id}/docker/containers/{container_id}/json"
+    )
+
+
+@mcp.tool
+async def portainer_container_logs(
+    environment_id: int,
+    container_id: str,
+    tail: int = 200,
+    timestamps: bool = True,
+) -> str:
+    """
+    Return recent stdout/stderr logs for a Docker container through Portainer.
+
+    tail is capped at 2000 lines to keep responses manageable.
+    """
+    safe_tail = max(1, min(tail, 2000))
+    data = await portainer_get(
+        f"/endpoints/{environment_id}/docker/containers/{container_id}/logs",
+        params={
+            "stdout": "true",
+            "stderr": "true",
+            "timestamps": "true" if timestamps else "false",
+            "tail": str(safe_tail),
+        },
+        raw=True,
+    )
+    return decode_docker_logs(data)
 
 
 if __name__ == "__main__":
