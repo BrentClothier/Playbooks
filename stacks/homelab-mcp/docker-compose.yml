@@ -1,0 +1,44 @@
+services:
+  homelab-mcp:
+    image: ghcr.io/brentclothier/homelab-mcp:latest
+    pull_policy: always
+    container_name: homelab-mcp
+    restart: unless-stopped
+
+    environment:
+      - PVE_URL=${PVE_URL}
+      - PVE_TOKEN_ID=${PVE_TOKEN_ID}
+      - PVE_TOKEN_SECRET=${PVE_TOKEN_SECRET}
+      - PVE_VERIFY_SSL=${PVE_VERIFY_SSL:-true}
+
+    ports:
+      - "127.0.0.1:${MCP_HTTP_PORT:-8765}:8000"
+
+    networks:
+      - homelab-mcp-net
+
+    security_opt:
+      - no-new-privileges:true
+
+    cap_drop:
+      - ALL
+
+    read_only: true
+
+    tmpfs:
+      - /tmp:size=64m
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  homelab-mcp-net:
+    name: homelab-mcp-net
