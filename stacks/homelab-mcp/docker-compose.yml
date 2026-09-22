@@ -23,9 +23,13 @@ services:
       - UNIFI_URL=${UNIFI_URL:-}
       - UNIFI_API_KEY=${UNIFI_API_KEY:-}
       - UNIFI_VERIFY_SSL=${UNIFI_VERIFY_SSL:-true}
+      - UNIFI_SYSLOG_ENABLED=${UNIFI_SYSLOG_ENABLED:-true}
+      - UNIFI_EVENT_DB=/data/unifi_events.db
+      - UNIFI_EVENT_RETENTION_DAYS=${UNIFI_EVENT_RETENTION_DAYS:-30}
 
     ports:
       - "127.0.0.1:${MCP_HTTP_PORT:-8765}:8000"
+      - "${UNIFI_SYSLOG_BIND_IP:-0.0.0.0}:${UNIFI_SYSLOG_HOST_PORT:-5514}:5514/udp"
 
     networks:
       - homelab-mcp-net
@@ -37,6 +41,9 @@ services:
       - ALL
 
     read_only: true
+
+    volumes:
+      - homelab-mcp-data:/data
 
     tmpfs:
       - /tmp:size=64m
@@ -79,3 +86,7 @@ services:
 networks:
   homelab-mcp-net:
     name: homelab-mcp-net
+
+volumes:
+  homelab-mcp-data:
+    name: homelab-mcp-data

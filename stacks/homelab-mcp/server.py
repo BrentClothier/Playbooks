@@ -1,5 +1,10 @@
 import json
 import os
+import re
+import socket
+import sqlite3
+import threading
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -52,6 +57,31 @@ UNIFI_VERIFY_SSL = os.getenv("UNIFI_VERIFY_SSL", "true").lower() in {
     "true",
     "yes",
     "on",
+}
+
+# UniFi CEF/syslog event collector
+UNIFI_SYSLOG_ENABLED = os.getenv("UNIFI_SYSLOG_ENABLED", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+UNIFI_SYSLOG_LISTEN_PORT = 5514
+UNIFI_EVENT_DB = os.getenv(
+    "UNIFI_EVENT_DB",
+    "/data/unifi_events.db",
+)
+UNIFI_EVENT_RETENTION_DAYS = max(
+    1,
+    int(os.getenv("UNIFI_EVENT_RETENTION_DAYS", "30")),
+)
+
+_unifi_syslog_state: dict[str, Any] = {
+    "started": False,
+    "listening": False,
+    "error": None,
+    "last_received_at": None,
+    "last_source_ip": None,
 }
 
 
@@ -323,6 +353,278 @@ async def unifi_get(
         return response.json()
 
 
+def _unescape_cef_value(value: str) -> str:
+    return (
+        value.replace(r"\n", "\n")
+        .replace(r"\r", "\r")
+        .replace(r"\=", "=")
+        .replace(r"\\", "\")
+    )
+
+
+def _split_cef_fields(payload: str) -> tuple[list[str], str]:
+    """
+    Split the seven CEF header fields while respecting backslash-escaped pipes.
+    """
+    fields: list[str] = []
+    current: list[str] = []
+    escaped = False
+    index = 0
+
+    for index, char in enumerate(payload):
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            current.append(char)
+            continue
+        if char == "|" and len(fields) < 7:
+            fields.append("".join(current))
+            current = []
+            if len(fields) == 7:
+                return fields, payload[index + 1 :]
+            continue
+        current.append(char)
+
+    raise ValueError("CEF message did not contain the expected header fields.")
+
+
+def parse_unifi_cef(raw_message: str) -> dict[str, Any]:
+    """Parse a UniFi Common Event Format log message."""
+    cef_index = raw_message.find("CEF:")
+    if cef_index < 0:
+        raise ValueError("Message does not contain a CEF payload.")
+
+    cef = raw_message[cef_index + 4 :]
+    fields, extension = _split_cef_fields(cef)
+
+    (
+        cef_version,
+        device_vendor,
+        device_product,
+        device_version,
+        event_class_id,
+        event_name,
+        severity,
+    ) = fields
+
+    key_matches = list(
+        re.finditer(
+            r"(?:^| )([A-Za-z][A-Za-z0-9_.:-]*)=",
+            extension,
+        )
+    )
+    ext: dict[str, str] = {}
+    for idx, match in enumerate(key_matches):
+        key = match.group(1)
+        value_start = match.end()
+        value_end = (
+            key_matches[idx + 1].start()
+            if idx + 1 < len(key_matches)
+            else len(extension)
+        )
+        value = extension[value_start:value_end].strip()
+        ext[key] = _unescape_cef_value(value)
+
+    return {
+        "cef_version": cef_version,
+        "device_vendor": device_vendor,
+        "device_product": device_product,
+        "device_version": device_version,
+        "event_class_id": event_class_id,
+        "name": _unescape_cef_value(event_name),
+        "severity": severity,
+        "category": ext.get("UNIFIcategory"),
+        "subcategory": ext.get("UNIFIsubCategory"),
+        "message": ext.get("msg"),
+        "fields": ext,
+    }
+
+
+def _unifi_db_connect() -> sqlite3.Connection:
+    connection = sqlite3.connect(UNIFI_EVENT_DB, timeout=10)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def init_unifi_event_db() -> None:
+    os.makedirs(os.path.dirname(UNIFI_EVENT_DB) or ".", exist_ok=True)
+    with _unifi_db_connect() as db:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS unifi_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                received_at TEXT NOT NULL,
+                source_ip TEXT,
+                event_class_id TEXT,
+                name TEXT,
+                severity TEXT,
+                category TEXT,
+                subcategory TEXT,
+                message TEXT,
+                fields_json TEXT NOT NULL,
+                raw TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_unifi_events_received "
+            "ON unifi_events(received_at)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_unifi_events_category "
+            "ON unifi_events(category, subcategory)"
+        )
+        cutoff = (
+            datetime.now(timezone.utc)
+            - timedelta(days=UNIFI_EVENT_RETENTION_DAYS)
+        ).isoformat()
+        db.execute(
+            "DELETE FROM unifi_events WHERE received_at < ?",
+            (cutoff,),
+        )
+
+
+def store_unifi_event(raw_message: str, source_ip: str | None) -> None:
+    parsed = parse_unifi_cef(raw_message)
+    received_at = datetime.now(timezone.utc).isoformat()
+
+    with _unifi_db_connect() as db:
+        db.execute(
+            """
+            INSERT INTO unifi_events (
+                received_at,
+                source_ip,
+                event_class_id,
+                name,
+                severity,
+                category,
+                subcategory,
+                message,
+                fields_json,
+                raw
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                received_at,
+                source_ip,
+                parsed["event_class_id"],
+                parsed["name"],
+                parsed["severity"],
+                parsed["category"],
+                parsed["subcategory"],
+                parsed["message"],
+                json.dumps(parsed["fields"], separators=(",", ":")),
+                raw_message,
+            ),
+        )
+
+    _unifi_syslog_state["last_received_at"] = received_at
+    _unifi_syslog_state["last_source_ip"] = source_ip
+
+
+def _unifi_syslog_udp_loop() -> None:
+    try:
+        init_unifi_event_db()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("0.0.0.0", UNIFI_SYSLOG_LISTEN_PORT))
+            _unifi_syslog_state["listening"] = True
+            _unifi_syslog_state["error"] = None
+
+            while True:
+                data, address = sock.recvfrom(65535)
+                raw_message = data.decode("utf-8", errors="replace").strip()
+                if not raw_message:
+                    continue
+                try:
+                    store_unifi_event(raw_message, address[0])
+                except Exception as exc:
+                    _unifi_syslog_state["error"] = (
+                        f"Last event parse/store error: {exc}"
+                    )
+    except Exception as exc:
+        _unifi_syslog_state["listening"] = False
+        _unifi_syslog_state["error"] = str(exc)
+
+
+def start_unifi_syslog_receiver() -> None:
+    if not UNIFI_SYSLOG_ENABLED or _unifi_syslog_state["started"]:
+        return
+
+    _unifi_syslog_state["started"] = True
+    thread = threading.Thread(
+        target=_unifi_syslog_udp_loop,
+        name="unifi-syslog",
+        daemon=True,
+    )
+    thread.start()
+
+
+def query_unifi_events(
+    *,
+    hours: int = 24,
+    limit: int = 100,
+    category: str | None = None,
+    subcategory: str | None = None,
+    search: str | None = None,
+) -> list[dict[str, Any]]:
+    safe_hours = max(1, min(hours, 24 * 90))
+    safe_limit = max(1, min(limit, 1000))
+    since = (
+        datetime.now(timezone.utc) - timedelta(hours=safe_hours)
+    ).isoformat()
+
+    clauses = ["received_at >= ?"]
+    values: list[Any] = [since]
+
+    if category:
+        clauses.append("LOWER(category) = LOWER(?)")
+        values.append(category)
+    if subcategory:
+        clauses.append("LOWER(subcategory) = LOWER(?)")
+        values.append(subcategory)
+    if search:
+        clauses.append(
+            "(name LIKE ? OR message LIKE ? OR fields_json LIKE ? OR raw LIKE ?)"
+        )
+        term = f"%{search}%"
+        values.extend([term, term, term, term])
+
+    values.append(safe_limit)
+    sql = (
+        "SELECT * FROM unifi_events WHERE "
+        + " AND ".join(clauses)
+        + " ORDER BY id DESC LIMIT ?"
+    )
+
+    with _unifi_db_connect() as db:
+        rows = db.execute(sql, values).fetchall()
+
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["fields"] = json.loads(item.pop("fields_json"))
+        item.pop("raw", None)
+        results.append(item)
+    return results
+
+
+def unifi_event_count() -> int:
+    if not os.path.exists(UNIFI_EVENT_DB):
+        return 0
+    try:
+        with _unifi_db_connect() as db:
+            row = db.execute(
+                "SELECT COUNT(*) AS count FROM unifi_events"
+            ).fetchone()
+        return int(row["count"]) if row else 0
+    except Exception:
+        return 0
+
+
 def decode_docker_logs(data: bytes) -> str:
     """
     Decode Docker log output.
@@ -382,6 +684,10 @@ async def health_check(request):
             ),
             "portainer_configured": portainer_ready(),
             "unifi_configured": unifi_ready(),
+            "unifi_syslog_enabled": UNIFI_SYSLOG_ENABLED,
+            "unifi_syslog_listening": _unifi_syslog_state["listening"],
+            "unifi_syslog_error": _unifi_syslog_state["error"],
+            "unifi_event_count": unifi_event_count(),
         }
     )
 
@@ -425,6 +731,13 @@ async def homelab_mcp_info() -> dict[str, Any]:
         "unifi_configured": unifi_ready(),
         "unifi_base_url": unifi_api_base_url() if UNIFI_URL else None,
         "unifi_ssl_verification": UNIFI_VERIFY_SSL,
+        "unifi_syslog_enabled": UNIFI_SYSLOG_ENABLED,
+        "unifi_syslog_listening": _unifi_syslog_state["listening"],
+        "unifi_syslog_last_received_at": (
+            _unifi_syslog_state["last_received_at"]
+        ),
+        "unifi_event_retention_days": UNIFI_EVENT_RETENTION_DAYS,
+        "unifi_event_count": unifi_event_count(),
     }
 
 
@@ -1114,5 +1427,141 @@ async def unifi_client(site_id: str, client_id: str) -> Any:
     )
 
 
+@mcp.tool
+async def unifi_syslog_status() -> Any:
+    """
+    Return the UniFi CEF/syslog collector state and retained event count.
+
+    Use this after configuring UniFi System Logging / SIEM to verify that
+    events are reaching the HomeLab MCP.
+    """
+    return {
+        "enabled": UNIFI_SYSLOG_ENABLED,
+        "listening": _unifi_syslog_state["listening"],
+        "listen_port_udp": UNIFI_SYSLOG_LISTEN_PORT,
+        "error": _unifi_syslog_state["error"],
+        "last_received_at": _unifi_syslog_state["last_received_at"],
+        "last_source_ip": _unifi_syslog_state["last_source_ip"],
+        "event_count": unifi_event_count(),
+        "retention_days": UNIFI_EVENT_RETENTION_DAYS,
+    }
+
+
+@mcp.tool
+async def unifi_recent_events(
+    hours: int = 24,
+    limit: int = 100,
+    category: str | None = None,
+    subcategory: str | None = None,
+    search: str | None = None,
+) -> Any:
+    """
+    Return retained UniFi System Log events received through CEF/syslog.
+
+    Filter by category (for example Internet, Monitoring, Security, System),
+    subcategory (for example WiFi), or a free-text search.
+    """
+    return query_unifi_events(
+        hours=hours,
+        limit=limit,
+        category=category,
+        subcategory=subcategory,
+        search=search,
+    )
+
+
+@mcp.tool
+async def unifi_wan_events(hours: int = 24, limit: int = 100) -> Any:
+    """
+    Return recent UniFi Internet-category events.
+
+    This is intended for WAN outages, failover, high latency, packet loss,
+    and related Internet health events exported by UniFi.
+    """
+    return query_unifi_events(
+        hours=hours,
+        limit=limit,
+        category="Internet",
+    )
+
+
+@mcp.tool
+async def unifi_wifi_events(hours: int = 24, limit: int = 100) -> Any:
+    """
+    Return recent Wi-Fi monitoring events.
+
+    Disconnect records can include RSSI, channel, channel width, airtime
+    utilization, interference, AP identity, SSID, duration, and usage when
+    UniFi includes those CEF fields.
+    """
+    return query_unifi_events(
+        hours=hours,
+        limit=limit,
+        category="Monitoring",
+        subcategory="WiFi",
+    )
+
+
+@mcp.tool
+async def unifi_security_events(hours: int = 24, limit: int = 100) -> Any:
+    """
+    Return recent UniFi Security events such as IDS/IPS, honeypot, or
+    firewall detections exported through System Logging / SIEM.
+    """
+    return query_unifi_events(
+        hours=hours,
+        limit=limit,
+        category="Security",
+    )
+
+
+@mcp.tool
+async def unifi_event_summary(hours: int = 24) -> Any:
+    """
+    Summarize retained UniFi events by category and event name for a time window.
+    """
+    safe_hours = max(1, min(hours, 24 * 90))
+    since = (
+        datetime.now(timezone.utc) - timedelta(hours=safe_hours)
+    ).isoformat()
+
+    with _unifi_db_connect() as db:
+        total_row = db.execute(
+            "SELECT COUNT(*) AS count FROM unifi_events WHERE received_at >= ?",
+            (since,),
+        ).fetchone()
+        categories = db.execute(
+            """
+            SELECT COALESCE(category, 'Uncategorized') AS category,
+                   COUNT(*) AS count
+            FROM unifi_events
+            WHERE received_at >= ?
+            GROUP BY category
+            ORDER BY count DESC
+            """,
+            (since,),
+        ).fetchall()
+        names = db.execute(
+            """
+            SELECT name, COUNT(*) AS count
+            FROM unifi_events
+            WHERE received_at >= ?
+            GROUP BY name
+            ORDER BY count DESC
+            LIMIT 20
+            """,
+            (since,),
+        ).fetchall()
+
+    return {
+        "hours": safe_hours,
+        "total_events": int(total_row["count"]) if total_row else 0,
+        "categories": [dict(row) for row in categories],
+        "top_events": [dict(row) for row in names],
+        "last_received_at": _unifi_syslog_state["last_received_at"],
+    }
+
+
 if __name__ == "__main__":
+    start_unifi_syslog_receiver()
     mcp.run(transport="http", host="0.0.0.0", port=8000)
