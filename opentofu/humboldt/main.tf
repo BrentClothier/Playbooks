@@ -1,11 +1,11 @@
 module "humboldt_data_vm" {
-  source = "./modules/vm"
+  source = "../modules/vm"
 
   template_name = var.template_name
 
   hostname = "humboldt-data01"
-  node     = var.pve_node
-  storage  = var.storage
+  node     = "proxmox2"
+  storage  = "USB_Storage_Space"
 
   cores     = 4
   memory    = 6144

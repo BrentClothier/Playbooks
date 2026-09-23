@@ -1197,6 +1197,116 @@ async def semaphore_task_output(
 
 
 @mcp.tool
+async def semaphore_setup_humboldt_automation() -> Any:
+    """
+    One-time, narrowly scoped setup for the Humboldt public-records project.
+
+    This creates the dedicated Semaphore project if needed and ensures two
+    HomeLab IaC templates exist in project 1:
+      - Humboldt OpenTofu Apply
+      - Humboldt Data Bootstrap
+
+    It intentionally does not expose generic project/template administration.
+    """
+    projects = await semaphore_get("/projects")
+    if not isinstance(projects, list):
+        raise RuntimeError("Semaphore project list was not returned as a list.")
+
+    project_name = "Humboldt Government Intelligence"
+    humboldt_project = next(
+        (item for item in projects if item.get("name") == project_name),
+        None,
+    )
+
+    if humboldt_project is None:
+        humboldt_project = await semaphore_post(
+            "/projects",
+            {
+                "name": project_name,
+                "alert": True,
+                "max_parallel_tasks": 2,
+                "type": "",
+                "demo": False,
+            },
+        )
+
+    home_project_id = 1
+    existing = await semaphore_get(
+        f"/project/{home_project_id}/templates",
+        params={"sort": "name", "order": "asc"},
+    )
+    if not isinstance(existing, list):
+        raise RuntimeError("Semaphore template list was not returned as a list.")
+
+    desired = [
+        {
+            "name": "Humboldt OpenTofu Apply",
+            "payload": {
+                "project_id": home_project_id,
+                "inventory_id": 4,
+                "repository_id": 1,
+                "environment_id": 2,
+                "environment_ids": [2],
+                "name": "Humboldt OpenTofu Apply",
+                "playbook": "opentofu/humboldt",
+                "arguments": "[]",
+                "app": "tofu",
+                "git_branch": "main",
+                "task_params": {"auto_approve": True},
+            },
+        },
+        {
+            "name": "Humboldt Data Bootstrap",
+            "payload": {
+                "project_id": home_project_id,
+                "inventory_id": 3,
+                "repository_id": 1,
+                "environment_id": 2,
+                "environment_ids": [2],
+                "name": "Humboldt Data Bootstrap",
+                "playbook": "ansible/humboldt/bootstrap_humboldt_data.yml",
+                "arguments": "[]",
+                "app": "ansible",
+                "git_branch": "main",
+            },
+        },
+    ]
+
+    created = []
+    present = []
+    for item in desired:
+        found = next(
+            (
+                template
+                for template in existing
+                if template.get("name") == item["name"]
+            ),
+            None,
+        )
+        if found:
+            present.append(
+                {
+                    "id": found.get("id"),
+                    "name": found.get("name"),
+                }
+            )
+            continue
+
+        made = await semaphore_post(
+            f"/project/{home_project_id}/templates",
+            item["payload"],
+        )
+        created.append(made)
+
+    return {
+        "humboldt_project": humboldt_project,
+        "iac_project_id": home_project_id,
+        "created_templates": created,
+        "existing_templates": present,
+    }
+
+
+@mcp.tool
 async def semaphore_allowed_templates() -> Any:
     """
     List Semaphore templates that this MCP is permitted to execute.
