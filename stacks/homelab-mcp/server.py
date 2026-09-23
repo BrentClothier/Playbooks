@@ -775,6 +775,43 @@ def unifi_event_count() -> int:
         return 0
 
 
+def unifi_latest_event_metadata() -> dict[str, str | None]:
+    """
+    Return the most recent persisted UniFi event timestamp and source.
+
+    This reads SQLite instead of process memory so the values survive MCP
+    container restarts and redeploys.
+    """
+    empty = {
+        "last_received_at": None,
+        "last_source_ip": None,
+    }
+
+    if not os.path.exists(UNIFI_EVENT_DB):
+        return empty
+
+    try:
+        with _unifi_db_connect() as db:
+            row = db.execute(
+                """
+                SELECT received_at, source_ip
+                FROM unifi_events
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+
+        if not row:
+            return empty
+
+        return {
+            "last_received_at": row["received_at"],
+            "last_source_ip": row["source_ip"],
+        }
+    except Exception:
+        return empty
+
+
 def decode_docker_logs(data: bytes) -> str:
     """
     Decode Docker log output.
@@ -813,6 +850,7 @@ def decode_docker_logs(data: bytes) -> str:
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request):
+    latest_event = unifi_latest_event_metadata()
     return JSONResponse(
         {
             "status": "healthy",
@@ -837,6 +875,8 @@ async def health_check(request):
             "unifi_syslog_enabled": UNIFI_SYSLOG_ENABLED,
             "unifi_syslog_listening": _unifi_syslog_state["listening"],
             "unifi_syslog_error": _unifi_syslog_state["error"],
+            "unifi_syslog_last_received_at": latest_event["last_received_at"],
+            "unifi_syslog_last_source_ip": latest_event["last_source_ip"],
             "unifi_event_count": unifi_event_count(),
         }
     )
@@ -845,6 +885,7 @@ async def health_check(request):
 @mcp.tool
 async def homelab_mcp_info() -> dict[str, Any]:
     """Return basic information about the HomeLab MCP service."""
+    latest_event = unifi_latest_event_metadata()
     integrations = ["proxmox"]
     if semaphore_ready():
         integrations.append("semaphore")
@@ -883,9 +924,8 @@ async def homelab_mcp_info() -> dict[str, Any]:
         "unifi_ssl_verification": UNIFI_VERIFY_SSL,
         "unifi_syslog_enabled": UNIFI_SYSLOG_ENABLED,
         "unifi_syslog_listening": _unifi_syslog_state["listening"],
-        "unifi_syslog_last_received_at": (
-            _unifi_syslog_state["last_received_at"]
-        ),
+        "unifi_syslog_last_received_at": latest_event["last_received_at"],
+        "unifi_syslog_last_source_ip": latest_event["last_source_ip"],
         "unifi_event_retention_days": UNIFI_EVENT_RETENTION_DAYS,
         "unifi_event_count": unifi_event_count(),
     }
@@ -1585,13 +1625,14 @@ async def unifi_syslog_status() -> Any:
     Use this after configuring UniFi System Logging / SIEM to verify that
     events are reaching the HomeLab MCP.
     """
+    latest_event = unifi_latest_event_metadata()
     return {
         "enabled": UNIFI_SYSLOG_ENABLED,
         "listening": _unifi_syslog_state["listening"],
         "listen_port_udp": UNIFI_SYSLOG_LISTEN_PORT,
         "error": _unifi_syslog_state["error"],
-        "last_received_at": _unifi_syslog_state["last_received_at"],
-        "last_source_ip": _unifi_syslog_state["last_source_ip"],
+        "last_received_at": latest_event["last_received_at"],
+        "last_source_ip": latest_event["last_source_ip"],
         "event_count": unifi_event_count(),
         "retention_days": UNIFI_EVENT_RETENTION_DAYS,
     }
@@ -1670,6 +1711,7 @@ async def unifi_event_summary(hours: int = 24) -> Any:
     """
     Summarize retained UniFi events by category and event name for a time window.
     """
+    latest_event = unifi_latest_event_metadata()
     safe_hours = max(1, min(hours, 24 * 90))
     since = (
         datetime.now(timezone.utc) - timedelta(hours=safe_hours)
@@ -1708,7 +1750,8 @@ async def unifi_event_summary(hours: int = 24) -> Any:
         "total_events": int(total_row["count"]) if total_row else 0,
         "categories": [dict(row) for row in categories],
         "top_events": [dict(row) for row in names],
-        "last_received_at": _unifi_syslog_state["last_received_at"],
+        "last_received_at": latest_event["last_received_at"],
+        "last_source_ip": latest_event["last_source_ip"],
     }
 
 
