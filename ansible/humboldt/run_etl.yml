@@ -1,0 +1,23 @@
+---
+- name: Run Humboldt ETL command on the data VM
+  hosts: humboldt_data
+  become: true
+  gather_facts: false
+
+  vars:
+    humboldt_stack_dir: /opt/humboldt-data
+    humboldt_etl_command: db-health
+
+  tasks:
+    - name: Run Humboldt ETL utility
+      ansible.builtin.command:
+        cmd: >-
+          docker compose --profile tools run --rm etl
+          {{ humboldt_etl_command }}
+        chdir: "{{ humboldt_stack_dir }}"
+      register: humboldt_etl
+      changed_when: false
+
+    - name: Show ETL result
+      ansible.builtin.debug:
+        var: humboldt_etl.stdout_lines

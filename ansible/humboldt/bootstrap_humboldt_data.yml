@@ -1,0 +1,172 @@
+---
+- name: Bootstrap Humboldt data VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    humboldt_vm_name: "humboldt-data01.home"
+    humboldt_vm_host: "192.168.86.173"
+    humboldt_vm_user: "root"
+
+  tasks:
+    - name: Wait for Humboldt data VM SSH
+      ansible.builtin.wait_for:
+        host: "{{ humboldt_vm_host }}"
+        port: 22
+        delay: 10
+        timeout: 900
+
+    - name: Add Humboldt data VM to in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ humboldt_vm_name }}"
+        ansible_host: "{{ humboldt_vm_host }}"
+        ansible_user: "{{ humboldt_vm_user }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+        groups: humboldt_data
+
+- name: Configure Humboldt data VM
+  hosts: humboldt_data
+  become: true
+  gather_facts: true
+
+  vars:
+    humboldt_stack_dir: /opt/humboldt-data
+    humboldt_stack_source: "{{ playbook_dir }}/../../stacks/humboldt-data"
+
+  tasks:
+    - name: Install base packages
+      ansible.builtin.apt:
+        update_cache: true
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - qemu-guest-agent
+          - python3
+        state: present
+
+    - name: Enable QEMU guest agent
+      ansible.builtin.service:
+        name: qemu-guest-agent
+        enabled: true
+        state: started
+
+    - name: Create Docker keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Download Docker signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /tmp/docker.asc
+        mode: "0644"
+        force: true
+
+    - name: Install Docker signing key
+      ansible.builtin.command:
+        cmd: gpg --dearmor -o /etc/apt/keyrings/docker.gpg /tmp/docker.asc
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Make Docker signing key readable
+      ansible.builtin.file:
+        path: /etc/apt/keyrings/docker.gpg
+        mode: "0644"
+
+    - name: Add Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg]
+          https://download.docker.com/linux/ubuntu
+          {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+
+    - name: Install Docker engine and Compose plugin
+      ansible.builtin.apt:
+        update_cache: true
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+    - name: Enable Docker
+      ansible.builtin.service:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Create Humboldt stack directory
+      ansible.builtin.file:
+        path: "{{ humboldt_stack_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy Humboldt stack
+      ansible.builtin.copy:
+        src: "{{ humboldt_stack_source }}/"
+        dest: "{{ humboldt_stack_dir }}/"
+        mode: preserve
+
+    - name: Check whether database environment exists
+      ansible.builtin.stat:
+        path: "{{ humboldt_stack_dir }}/.env"
+      register: humboldt_env
+
+    - name: Generate persistent database credentials
+      ansible.builtin.shell: |
+        set -eu
+        umask 077
+        password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+        cat > "{{ humboldt_stack_dir }}/.env" <<EOF
+        POSTGRES_DB=humboldt
+        POSTGRES_USER=humboldt_admin
+        POSTGRES_PASSWORD=$password
+        EOF
+      args:
+        executable: /bin/bash
+      when: not humboldt_env.stat.exists
+      no_log: true
+
+    - name: Secure database environment file
+      ansible.builtin.file:
+        path: "{{ humboldt_stack_dir }}/.env"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Build and start Humboldt data services
+      ansible.builtin.command:
+        cmd: docker compose up -d --build
+        chdir: "{{ humboldt_stack_dir }}"
+      register: humboldt_compose
+      changed_when: >-
+        'Started' in humboldt_compose.stdout
+        or 'Created' in humboldt_compose.stdout
+        or 'Built' in humboldt_compose.stdout
+
+    - name: Wait for PostgreSQL health
+      ansible.builtin.command:
+        cmd: >-
+          docker compose exec -T db
+          pg_isready -U humboldt_admin -d humboldt
+        chdir: "{{ humboldt_stack_dir }}"
+      register: humboldt_db_health
+      retries: 30
+      delay: 5
+      until: humboldt_db_health.rc == 0
+      changed_when: false
+
+    - name: Verify PostGIS and pgvector
+      ansible.builtin.command:
+        cmd: docker compose --profile tools run --rm etl db-health
+        chdir: "{{ humboldt_stack_dir }}"
+      register: humboldt_extension_health
+      changed_when: false
