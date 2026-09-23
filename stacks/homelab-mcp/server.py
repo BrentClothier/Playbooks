@@ -848,6 +848,103 @@ def decode_docker_logs(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+LOG_REDACTED_VALUE = "<redacted>"
+
+_LOG_SECRET_ASSIGNMENT_RE = re.compile(
+    r"""(?ix)
+    (?P<prefix>
+        ["']?
+        (?:password|passwd|pwd|secret|client_secret|api_key|apikey|
+           access_token|refresh_token|auth_token|bearer_token|
+           private_key|credential|credentials|authorization|authentication)
+        ["']?
+        \s*(?:=|:)\s*
+    )
+    (?P<quote>["']?)
+    (?P<value>[^\s,"';]+|[^\r\n]*?)
+    (?P=quote)
+    (?=\s|[,;}\]]|$)
+    """
+)
+
+_LOG_AUTH_HEADER_RE = re.compile(
+    r"""(?im)
+    (?P<prefix>authorization\s*:\s*)
+    (?:(?:bearer|basic)\s+)?[^\s,;]+
+    """
+)
+
+_LOG_CREDENTIAL_URL_RE = re.compile(
+    r"""(?i)
+    (?P<scheme>[a-z][a-z0-9+.-]*://)
+    (?P<user>[^\s:/@]+):
+    (?P<password>[^\s/@]+)@
+    """
+)
+
+_LOG_TOKEN_PREFIX_RE = re.compile(
+    r"""(?x)
+    \b(
+        sk-[A-Za-z0-9_-]{20,}|
+        github_pat_[A-Za-z0-9_]{20,}|
+        gh[pousr]_[A-Za-z0-9]{20,}|
+        ptr_[A-Za-z0-9_-]{20,}
+    )\b
+    """
+)
+
+_LOG_PRIVATE_KEY_RE = re.compile(
+    r"""(?is)
+    -----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----
+    .*?
+    -----END(?: [A-Z0-9]+)? PRIVATE KEY-----
+    """
+)
+
+
+def redact_log_secrets(text: str) -> str:
+    """
+    Redact common credentials from container logs before returning them.
+
+    The scrubber intentionally targets recognizable secret-bearing syntax
+    rather than arbitrary high-entropy strings, preserving useful diagnostics.
+    """
+    if not text:
+        return text
+
+    redacted = _LOG_PRIVATE_KEY_RE.sub(
+        f"-----BEGIN PRIVATE KEY-----\n{LOG_REDACTED_VALUE}\n"
+        "-----END PRIVATE KEY-----",
+        text,
+    )
+
+    redacted = _LOG_AUTH_HEADER_RE.sub(
+        lambda match: f"{match.group('prefix')}{LOG_REDACTED_VALUE}",
+        redacted,
+    )
+
+    redacted = _LOG_CREDENTIAL_URL_RE.sub(
+        lambda match: (
+            f"{match.group('scheme')}{match.group('user')}:"
+            f"{LOG_REDACTED_VALUE}@"
+        ),
+        redacted,
+    )
+
+    redacted = _LOG_SECRET_ASSIGNMENT_RE.sub(
+        lambda match: (
+            f"{match.group('prefix')}"
+            f"{match.group('quote')}{LOG_REDACTED_VALUE}"
+            f"{match.group('quote')}"
+        ),
+        redacted,
+    )
+
+    redacted = _LOG_TOKEN_PREFIX_RE.sub(LOG_REDACTED_VALUE, redacted)
+
+    return redacted
+
+
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request):
     latest_event = unifi_latest_event_metadata()
@@ -1285,7 +1382,8 @@ async def portainer_container_logs(
     """
     Return recent stdout/stderr logs for a Docker container through Portainer.
 
-    tail is capped at 2000 lines to keep responses manageable.
+    Common credentials are redacted before logs leave the MCP. tail is capped
+    at 2000 lines to keep responses manageable.
     """
     safe_tail = max(1, min(tail, 2000))
     data = await portainer_get(
@@ -1298,7 +1396,7 @@ async def portainer_container_logs(
         },
         raw=True,
     )
-    return decode_docker_logs(data)
+    return redact_log_secrets(decode_docker_logs(data))
 
 
 @mcp.tool
@@ -1311,7 +1409,8 @@ async def portainer_stack_logs(
     Return recent logs from every container belonging to a Portainer stack.
 
     The stack is resolved to its Portainer environment, then containers are
-    matched by the Docker Compose project label. Logs are returned per container.
+    matched by the Docker Compose project label. Logs are returned per container
+    with common credentials redacted before they leave the MCP.
     """
     safe_tail = max(1, min(tail, 2000))
     stack = await portainer_get(f"/stacks/{stack_id}")
@@ -1382,7 +1481,7 @@ async def portainer_stack_logs(
                     "container_name": container_name,
                     "state": container.get("State"),
                     "status": container.get("Status"),
-                    "logs": decode_docker_logs(data),
+                    "logs": redact_log_secrets(decode_docker_logs(data)),
                 }
             )
         except Exception as exc:
