@@ -67,7 +67,7 @@ services:
 
     environment:
       CONTROL_PLANE_API_KEY: ${CONTROL_PLANE_API_KEY}
-      CONTROL_PLANE_TUNNEL_ID: ${CONTROL_PLANE_TUNNEL_ID}
+      CONTROL_PLANE_TUNNEL_ID: ${CONTROL_PLANE_TUNNEL_ID:-tunnel_6ab2fb10ce6c819184f15c9ea53a5827}
       MCP_SERVER_URL: http://homelab-mcp:8000/mcp
       LOG_LEVEL: info
       LOG_FORMAT: json
