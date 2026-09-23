@@ -14,7 +14,7 @@
 +                        "V61_FIX MinecraftDeadCallback pc={:#x} lr={:#x} x28={:#x}",
 +                        pc, lr, x28);
 +            m_parent.m_jit->SetPC(lr);
-+            m_parent.m_jit->HaltExecution(Dynarmic::HaltReason::BreakLoop);
++            m_parent.m_jit->HaltExecution(BreakLoop);
 +            return;
 +        }
          LOG_CRITICAL(Core_ARM, "Cannot execute instruction at unmapped address {:#016x}", pc);

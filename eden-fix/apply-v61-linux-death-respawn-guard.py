@@ -35,7 +35,7 @@ new = """    case Dynarmic::A64::Exception::NoExecuteFault: {
                 ++v61_dead_callback_count;
             }
             m_parent.m_jit->SetPC(lr);
-            m_parent.m_jit->HaltExecution(Dynarmic::HaltReason::BreakLoop);
+            m_parent.m_jit->HaltExecution(BreakLoop);
             return;
         }
 
