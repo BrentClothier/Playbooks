@@ -1,0 +1,23 @@
+--- a/src/core/arm/dynarmic/arm_dynarmic_64.cpp
++++ b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
+@@
+-    case Dynarmic::A64::Exception::NoExecuteFault:
++    case Dynarmic::A64::Exception::NoExecuteFault: {
++        const u64 lr = m_parent.m_jit->GetRegister(30);
++        const u64 x28 = m_parent.m_jit->GetRegister(28);
++        const bool v61_minecraft_dead_callback =
++            m_process != nullptr && m_process->GetProgramId() == 0x0100D71004694000ULL &&
++            pc <= 4 && x28 == 0xDEADC0DEULL &&
++            m_memory.IsValidVirtualAddressRange(lr, sizeof(u32));
++        if (v61_minecraft_dead_callback) {
++            LOG_WARNING(Core_ARM,
++                        "V61_FIX MinecraftDeadCallback pc={:#x} lr={:#x} x28={:#x}",
++                        pc, lr, x28);
++            m_parent.m_jit->SetPC(lr);
++            m_parent.m_jit->HaltExecution(Dynarmic::HaltReason::BreakLoop);
++            return;
++        }
+         LOG_CRITICAL(Core_ARM, "Cannot execute instruction at unmapped address {:#016x}", pc);
+         ReturnException(pc, PrefetchAbort);
+         return;
++    }
