@@ -195,13 +195,130 @@ def portainer_ready() -> bool:
     return bool(PORTAINER_URL and PORTAINER_API_TOKEN)
 
 
+PORTAINER_REDACTED_VALUE = "<redacted>"
+
+
+def portainer_sensitive_key(key: str) -> bool:
+    """
+    Identify Portainer/Docker response fields that may contain credentials.
+    """
+    normalized = (
+        str(key)
+        .lower()
+        .replace("-", "_")
+        .replace(".", "_")
+    )
+
+    sensitive_terms = (
+        "password",
+        "passwd",
+        "secret",
+        "api_key",
+        "apikey",
+        "access_token",
+        "refresh_token",
+        "auth_token",
+        "bearer_token",
+        "client_secret",
+        "private_key",
+        "credential",
+        "credentials",
+        "authorization",
+        "authentication",
+    )
+
+    return any(term in normalized for term in sensitive_terms)
+
+
+def redact_portainer_env(env: Any) -> Any:
+    """
+    Preserve environment-variable names while removing every value.
+
+    Handles:
+      ["FOO=bar", "PASSWORD=secret"]
+
+    and Portainer-style:
+      [{"name": "FOO", "value": "bar"}]
+    """
+    if not isinstance(env, list):
+        return PORTAINER_REDACTED_VALUE
+
+    result = []
+
+    for entry in env:
+        if isinstance(entry, str):
+            if "=" in entry:
+                name = entry.split("=", 1)[0]
+                result.append(
+                    f"{name}={PORTAINER_REDACTED_VALUE}"
+                )
+            else:
+                result.append(entry)
+
+        elif isinstance(entry, dict):
+            cleaned = {}
+
+            for key, value in entry.items():
+                if str(key).lower() == "value":
+                    cleaned[key] = PORTAINER_REDACTED_VALUE
+                else:
+                    cleaned[key] = sanitize_portainer_payload(value)
+
+            result.append(cleaned)
+
+        else:
+            result.append(
+                sanitize_portainer_payload(entry)
+            )
+
+    return result
+
+
+def sanitize_portainer_payload(value: Any) -> Any:
+    """
+    Recursively sanitize JSON returned by Portainer.
+
+    Environment-variable VALUES are always removed, regardless of their
+    variable name. Other fields with credential-like names are also redacted.
+    """
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+
+        for key, item in value.items():
+            key_lower = str(key).lower()
+
+            if key_lower == "env":
+                result[key] = redact_portainer_env(item)
+
+            elif portainer_sensitive_key(str(key)):
+                result[key] = PORTAINER_REDACTED_VALUE
+
+            else:
+                result[key] = sanitize_portainer_payload(item)
+
+        return result
+
+    if isinstance(value, list):
+        return [
+            sanitize_portainer_payload(item)
+            for item in value
+        ]
+
+    return value
+
+
 async def portainer_get(
     path: str,
     params: dict[str, Any] | None = None,
     *,
     raw: bool = False,
 ) -> Any:
-    """Make an authenticated read-only request to the Portainer API."""
+    """
+    Make an authenticated read-only request to the Portainer API.
+
+    JSON responses are sanitized before leaving the MCP.
+    Raw responses, such as Docker logs, are returned unchanged.
+    """
     if not portainer_ready():
         raise RuntimeError(
             "Portainer is not configured. Set PORTAINER_URL and "
@@ -219,20 +336,32 @@ async def portainer_get(
         verify=PORTAINER_VERIFY_SSL,
         timeout=httpx.Timeout(30.0),
     ) as client:
-        response = await client.get(path, params=params)
+        response = await client.get(
+            path,
+            params=params,
+        )
         response.raise_for_status()
+
         if raw:
             return response.content
+
         if not response.content:
             return None
-        return response.json()
+
+        payload = response.json()
+
+        return sanitize_portainer_payload(payload)
 
 
 async def portainer_post(
     path: str,
     params: dict[str, Any] | None = None,
 ) -> Any:
-    """Make an authenticated state-changing POST request through Portainer."""
+    """
+    Make an authenticated state-changing POST request through Portainer.
+
+    Any JSON returned by Portainer is sanitized before leaving the MCP.
+    """
     if not portainer_ready():
         raise RuntimeError(
             "Portainer is not configured. Set PORTAINER_URL and "
@@ -250,15 +379,23 @@ async def portainer_post(
         verify=PORTAINER_VERIFY_SSL,
         timeout=httpx.Timeout(60.0),
     ) as client:
-        response = await client.post(path, params=params)
+        response = await client.post(
+            path,
+            params=params,
+        )
         response.raise_for_status()
+
         if not response.content:
             return {
                 "ok": True,
                 "status_code": response.status_code,
             }
+
         try:
-            return response.json()
+            payload = response.json()
+
+            return sanitize_portainer_payload(payload)
+
         except ValueError:
             return {
                 "ok": True,
@@ -272,7 +409,11 @@ async def portainer_put(
     params: dict[str, Any] | None = None,
     payload: dict[str, Any] | None = None,
 ) -> Any:
-    """Make an authenticated state-changing PUT request to the Portainer API."""
+    """
+    Make an authenticated state-changing PUT request to Portainer.
+
+    Any JSON returned by Portainer is sanitized before leaving the MCP.
+    """
     if not portainer_ready():
         raise RuntimeError(
             "Portainer is not configured. Set PORTAINER_URL and "
@@ -291,15 +432,24 @@ async def portainer_put(
         verify=PORTAINER_VERIFY_SSL,
         timeout=httpx.Timeout(120.0),
     ) as client:
-        response = await client.put(path, params=params, json=payload or {})
+        response = await client.put(
+            path,
+            params=params,
+            json=payload or {},
+        )
         response.raise_for_status()
+
         if not response.content:
             return {
                 "ok": True,
                 "status_code": response.status_code,
             }
+
         try:
-            return response.json()
+            result = response.json()
+
+            return sanitize_portainer_payload(result)
+
         except ValueError:
             return {
                 "ok": True,
