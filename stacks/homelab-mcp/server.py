@@ -1712,7 +1712,7 @@ async def portainer_stop_container(
 
 def _portainer_version_tuple(version: Any) -> tuple[int, int, int]:
     """Parse a Portainer semantic version such as 2.45.1."""
-    match = re.match(r"^(\\d+)\\.(\\d+)\\.(\\d+)", str(version or ""))
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", str(version or ""))
     if not match:
         raise RuntimeError(
             f"Could not parse Portainer server version: {version!r}"
@@ -1852,6 +1852,12 @@ async def portainer_redeploy_stack(
         raise RuntimeError(
             f"Portainer stack {stack_id} is not active. Refusing to redeploy "
             "a stopped/inactive stack because that could unexpectedly start it."
+        )
+
+    if not stack.get("WorkflowID"):
+        raise RuntimeError(
+            "The selected Portainer stack does not have a Git workflow. "
+            "Refusing to call the Git redeploy endpoint."
         )
 
     env_before = _portainer_env_fingerprint(stack.get("Env"))
