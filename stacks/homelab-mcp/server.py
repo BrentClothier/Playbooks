@@ -1811,18 +1811,18 @@ async def portainer_redeploy_stack(
       * refuses to redeploy the HomeLab MCP stack from inside itself;
       * fails closed on Portainer major/minor versions not explicitly tested.
 
-    force_redeploy is retained only for backward compatibility with the older
-    MCP tool schema. Portainer's Git redeploy endpoint is itself the explicit
-    redeploy action, and is not sent to Portainer.
+    force_redeploy is retained for backward compatibility with older MCP tool
+    catalogs. force_redeploy=false is treated as preflight-only and performs no
+    Portainer write. Portainer's Git redeploy endpoint is itself the explicit
+    redeploy action, so this compatibility flag is not sent to Portainer.
 
-    Set preflight_only=true to run every safety check without changing Portainer.
+    Newer clients may also set preflight_only=true directly.
     """
+    # Backward compatibility: older MCP tool catalogs do not expose the
+    # preflight_only argument yet. In those clients, force_redeploy=false is
+    # treated as an explicit request for a no-write safety preflight.
     if not force_redeploy:
-        raise ValueError(
-            "force_redeploy=false is not supported by the safe Portainer "
-            "2.45 Git redeploy path. Use preflight_only=true for a no-write "
-            "validation."
-        )
+        preflight_only = True
 
     server_version = await _portainer_assert_redeploy_version()
     stack = await _portainer_get_private_json(f"/stacks/{stack_id}")
