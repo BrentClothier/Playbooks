@@ -1805,7 +1805,7 @@ async def portainer_redeploy_stack(
 
     Safety behavior:
       * uses the 2.45 Git-specific /git/redeploy endpoint only;
-      * sends only the documented PullImage and Prune fields;
+      * sends only RepullImageAndRedeploy and Prune to Portainer 2.45;
       * requires Env to be a real array before the write;
       * snapshots Env and Git identity privately and verifies both afterward;
       * refuses to redeploy the HomeLab MCP stack from inside itself;
@@ -1813,7 +1813,7 @@ async def portainer_redeploy_stack(
 
     force_redeploy is retained only for backward compatibility with the older
     MCP tool schema. Portainer's Git redeploy endpoint is itself the explicit
-    redeploy action, so no RepullImageAndRedeploy field is sent.
+    redeploy action, and is not sent to Portainer.
 
     Set preflight_only=true to run every safety check without changing Portainer.
     """
@@ -1880,7 +1880,7 @@ async def portainer_redeploy_stack(
             f"/stacks/{stack_id}/git/redeploy",
             params={"endpointId": environment_id},
             payload={
-                "PullImage": pull_images,
+                "RepullImageAndRedeploy": pull_images,
                 "Prune": prune,
             },
         )
