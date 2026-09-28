@@ -307,6 +307,41 @@ def sanitize_portainer_payload(value: Any) -> Any:
     return value
 
 
+async def _portainer_get_private_json(
+    path: str,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    """
+    Fetch unsanitized Portainer JSON for internal safety checks only.
+
+    IMPORTANT: Results from this helper can contain credentials. Never return
+    them directly from an MCP tool. Public Portainer tools must continue to use
+    portainer_get(), which sanitizes JSON before it leaves this process.
+    """
+    if not portainer_ready():
+        raise RuntimeError(
+            "Portainer is not configured. Set PORTAINER_URL and "
+            "PORTAINER_API_TOKEN in the HomeLab MCP container."
+        )
+
+    headers = {
+        "X-API-Key": PORTAINER_API_TOKEN,
+        "Accept": "application/json",
+    }
+
+    async with httpx.AsyncClient(
+        base_url=f"{PORTAINER_URL}/api",
+        headers=headers,
+        verify=PORTAINER_VERIFY_SSL,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+        if not response.content:
+            return None
+        return response.json()
+
+
 async def portainer_get(
     path: str,
     params: dict[str, Any] | None = None,
@@ -319,38 +354,30 @@ async def portainer_get(
     JSON responses are sanitized before leaving the MCP.
     Raw responses, such as Docker logs, are returned unchanged.
     """
-    if not portainer_ready():
-        raise RuntimeError(
-            "Portainer is not configured. Set PORTAINER_URL and "
-            "PORTAINER_API_TOKEN in the HomeLab MCP container."
-        )
+    if raw:
+        if not portainer_ready():
+            raise RuntimeError(
+                "Portainer is not configured. Set PORTAINER_URL and "
+                "PORTAINER_API_TOKEN in the HomeLab MCP container."
+            )
 
-    headers = {
-        "X-API-Key": PORTAINER_API_TOKEN,
-        "Accept": "*/*" if raw else "application/json",
-    }
+        headers = {
+            "X-API-Key": PORTAINER_API_TOKEN,
+            "Accept": "*/*",
+        }
 
-    async with httpx.AsyncClient(
-        base_url=f"{PORTAINER_URL}/api",
-        headers=headers,
-        verify=PORTAINER_VERIFY_SSL,
-        timeout=httpx.Timeout(30.0),
-    ) as client:
-        response = await client.get(
-            path,
-            params=params,
-        )
-        response.raise_for_status()
-
-        if raw:
+        async with httpx.AsyncClient(
+            base_url=f"{PORTAINER_URL}/api",
+            headers=headers,
+            verify=PORTAINER_VERIFY_SSL,
+            timeout=httpx.Timeout(30.0),
+        ) as client:
+            response = await client.get(path, params=params)
+            response.raise_for_status()
             return response.content
 
-        if not response.content:
-            return None
-
-        payload = response.json()
-
-        return sanitize_portainer_payload(payload)
+    payload = await _portainer_get_private_json(path, params=params)
+    return sanitize_portainer_payload(payload)
 
 
 async def portainer_post(
@@ -1683,31 +1710,170 @@ async def portainer_stop_container(
     }
 
 
+def _portainer_version_tuple(version: Any) -> tuple[int, int, int]:
+    """Parse a Portainer semantic version such as 2.45.1."""
+    match = re.match(r"^(\\d+)\\.(\\d+)\\.(\\d+)", str(version or ""))
+    if not match:
+        raise RuntimeError(
+            f"Could not parse Portainer server version: {version!r}"
+        )
+    return tuple(int(part) for part in match.groups())
+
+
+async def _portainer_assert_redeploy_version() -> str:
+    """
+    Fail closed unless the Portainer Git redeploy path is a tested 2.45.x build.
+
+    This deliberately requires review after a future LTS/STS jump instead of
+    silently assuming the write API has identical semantics.
+    """
+    status = await _portainer_get_private_json("/status")
+    if not isinstance(status, dict):
+        raise RuntimeError("Portainer /status did not return a JSON object.")
+
+    version = status.get("Version") or status.get("version")
+    major, minor, patch = _portainer_version_tuple(version)
+
+    if (major, minor) != (2, 45) or patch < 1:
+        raise RuntimeError(
+            "Portainer stack redeploy is safety-locked to tested 2.45.x "
+            f"versions at or above 2.45.1. Server reported {version!r}. "
+            "Review the Portainer API before enabling this write on another "
+            "major/minor release."
+        )
+
+    return str(version)
+
+
+def _portainer_env_fingerprint(env: Any) -> tuple[tuple[str, Any], ...]:
+    """
+    Capture Portainer stack environment state without exposing it.
+
+    The returned structure is used only for in-process before/after comparison.
+    """
+    if not isinstance(env, list):
+        raise RuntimeError(
+            "Portainer stack Env is not an array. Refusing to redeploy because "
+            "this is the metadata-corruption state that previously caused "
+            "credential loss."
+        )
+
+    fingerprint: list[tuple[str, Any]] = []
+    for entry in env:
+        if not isinstance(entry, dict) or "name" not in entry:
+            raise RuntimeError(
+                "Portainer stack Env contains an unexpected entry. "
+                "Refusing to redeploy."
+            )
+        fingerprint.append((str(entry["name"]), entry.get("value")))
+
+    return tuple(fingerprint)
+
+
+def _portainer_git_identity(git_config: Any) -> tuple[str, str, str]:
+    """Return the non-secret Git fields that must survive a redeploy."""
+    if not isinstance(git_config, dict):
+        raise RuntimeError(
+            "The selected Portainer stack is not Git-backed. "
+            "Refusing to call the Git redeploy endpoint."
+        )
+
+    url = git_config.get("URL")
+    reference = git_config.get("ReferenceName")
+    config_path = git_config.get("ConfigFilePath")
+
+    if not url or not reference or not config_path:
+        raise RuntimeError(
+            "Portainer GitConfig is incomplete. Refusing to redeploy because "
+            "the repository URL, reference, and compose path must all be "
+            "present."
+        )
+
+    return str(url), str(reference), str(config_path)
+
+
 @mcp.tool
 async def portainer_redeploy_stack(
     stack_id: int,
     pull_images: bool = True,
     prune: bool = False,
     force_redeploy: bool = True,
+    preflight_only: bool = False,
 ) -> Any:
     """
-    Pull and redeploy a Git-backed Portainer stack.
+    Safely redeploy a Git-backed Portainer stack on Portainer 2.45.x.
 
-    By default this pulls current images and forces a redeploy. The operation
-    does not delete volumes. It will fail if the selected stack is not backed
-    by a Git repository.
+    Safety behavior:
+      * uses the 2.45 Git-specific /git/redeploy endpoint only;
+      * sends only the documented PullImage and Prune fields;
+      * requires Env to be a real array before the write;
+      * snapshots Env and Git identity privately and verifies both afterward;
+      * refuses to redeploy the HomeLab MCP stack from inside itself;
+      * fails closed on Portainer major/minor versions not explicitly tested.
+
+    force_redeploy is retained only for backward compatibility with the older
+    MCP tool schema. Portainer's Git redeploy endpoint is itself the explicit
+    redeploy action, so no RepullImageAndRedeploy field is sent.
+
+    Set preflight_only=true to run every safety check without changing Portainer.
     """
-    stack = await portainer_get(f"/stacks/{stack_id}")
+    if not force_redeploy:
+        raise ValueError(
+            "force_redeploy=false is not supported by the safe Portainer "
+            "2.45 Git redeploy path. Use preflight_only=true for a no-write "
+            "validation."
+        )
+
+    server_version = await _portainer_assert_redeploy_version()
+    stack = await _portainer_get_private_json(f"/stacks/{stack_id}")
+
     if not isinstance(stack, dict):
-        return stack
+        raise RuntimeError(
+            f"Portainer stack {stack_id} did not return a JSON object."
+        )
 
     environment_id = stack.get("EndpointId")
     stack_name = stack.get("Name")
 
-    if not environment_id:
+    if not environment_id or not stack_name:
         raise RuntimeError(
-            "Portainer stack response did not include an EndpointId."
+            "Portainer stack response did not include EndpointId and Name."
         )
+
+    if str(stack_name).lower() == "homelab-mcp":
+        raise RuntimeError(
+            "Refusing to redeploy homelab-mcp from inside homelab-mcp. "
+            "A self-redeploy can terminate the tunnel before the operation "
+            "finishes. Use Portainer directly or an external Semaphore "
+            "automation for HomeLab MCP updates."
+        )
+
+    if stack.get("Status") != 1:
+        raise RuntimeError(
+            f"Portainer stack {stack_id} is not active. Refusing to redeploy "
+            "a stopped/inactive stack because that could unexpectedly start it."
+        )
+
+    env_before = _portainer_env_fingerprint(stack.get("Env"))
+    git_before = _portainer_git_identity(stack.get("GitConfig"))
+
+    safe_preflight = {
+        "action": "redeploy_stack_preflight",
+        "stack_id": stack_id,
+        "stack_name": stack_name,
+        "environment_id": environment_id,
+        "portainer_version": server_version,
+        "git_repository": git_before[0],
+        "git_reference": git_before[1],
+        "git_config_path": git_before[2],
+        "environment_variable_count": len(env_before),
+        "pull_images": pull_images,
+        "prune": prune,
+        "safe_to_call_git_redeploy": True,
+    }
+
+    if preflight_only:
+        return safe_preflight
 
     try:
         result = await portainer_put(
@@ -1716,26 +1882,49 @@ async def portainer_redeploy_stack(
             payload={
                 "PullImage": pull_images,
                 "Prune": prune,
-                "RepullImageAndRedeploy": force_redeploy,
             },
         )
     except httpx.HTTPStatusError as exc:
-        detail = exc.response.text[:1000]
+        detail = redact_log_secrets(exc.response.text[:1000])
         raise RuntimeError(
             f"Portainer could not redeploy stack {stack_id}. "
-            f"The stack may not be Git-backed or the API token may not "
-            f"have permission. Portainer returned "
-            f"{exc.response.status_code}: {detail}"
+            f"Portainer returned {exc.response.status_code}: {detail}"
         ) from exc
+
+    stack_after = await _portainer_get_private_json(f"/stacks/{stack_id}")
+    if not isinstance(stack_after, dict):
+        raise RuntimeError(
+            "CRITICAL: Portainer redeployed the stack but the post-deploy "
+            "metadata check could not read the stack object."
+        )
+
+    env_after = _portainer_env_fingerprint(stack_after.get("Env"))
+    git_after = _portainer_git_identity(stack_after.get("GitConfig"))
+
+    if env_after != env_before:
+        raise RuntimeError(
+            "CRITICAL: Portainer redeployed the stack but its environment "
+            "metadata changed unexpectedly. No environment values are being "
+            "returned. Inspect the stack in Portainer before another write."
+        )
+
+    if git_after != git_before:
+        raise RuntimeError(
+            "CRITICAL: Portainer redeployed the stack but its Git identity "
+            "changed unexpectedly. Inspect the stack in Portainer before "
+            "another write."
+        )
 
     return {
         "action": "redeploy_stack",
         "stack_id": stack_id,
         "stack_name": stack_name,
         "environment_id": environment_id,
+        "portainer_version": server_version,
         "pull_images": pull_images,
         "prune": prune,
-        "force_redeploy": force_redeploy,
+        "environment_metadata_preserved": True,
+        "git_metadata_preserved": True,
         "result": result,
     }
 
