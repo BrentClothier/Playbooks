@@ -1,23 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import os
+import json
 
-import psycopg
-
-
-def database_dsn() -> str:
-    return (
-        f"host={os.environ.get('DATABASE_HOST', 'db')} "
-        f"port={os.environ.get('DATABASE_PORT', '5432')} "
-        f"dbname={os.environ.get('DATABASE_NAME', 'humboldt')} "
-        f"user={os.environ.get('DATABASE_USER', 'humboldt_admin')} "
-        f"password={os.environ['DATABASE_PASSWORD']}"
-    )
+from .arcgis import sync_residential_zoning
+from .db import connect
+from .legistar import sync_legistar
 
 
 def db_health() -> None:
-    with psycopg.connect(database_dsn(), connect_timeout=10) as conn:
+    with connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -38,19 +30,82 @@ def db_health() -> None:
     )
 
 
+def stats() -> None:
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    (SELECT count(*) FROM gov.meetings),
+                    (SELECT count(*) FROM gov.agenda_items),
+                    (SELECT count(*) FROM gis.residential_zoning)
+                """
+            )
+            meetings, agenda_items, zoning = cur.fetchone()
+    print(
+        json.dumps(
+            {
+                "meetings": meetings,
+                "agenda_items": agenda_items,
+                "zoning_features": zoning,
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def sync_all(days_back: int) -> None:
+    result = {
+        "legistar": sync_legistar(days_back=days_back),
+        "residential_zoning": sync_residential_zoning(),
+    }
+    print(json.dumps(result, sort_keys=True))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Humboldt Government Intelligence ETL utility"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
     subparsers.add_parser(
         "db-health",
         help="Verify PostgreSQL, PostGIS, and pgvector connectivity.",
     )
+    subparsers.add_parser(
+        "stats",
+        help="Show row counts for the first structured public-record datasets.",
+    )
+
+    legistar = subparsers.add_parser(
+        "sync-legistar",
+        help="Ingest recent Humboldt County Legistar meetings and agenda items.",
+    )
+    legistar.add_argument("--days-back", type=int, default=730)
+
+    subparsers.add_parser(
+        "sync-zoning",
+        help="Ingest Humboldt County residential zoning polygons from ArcGIS.",
+    )
+
+    sync = subparsers.add_parser(
+        "sync-all",
+        help="Run the first Humboldt public-records ingestion set.",
+    )
+    sync.add_argument("--legistar-days-back", type=int, default=730)
 
     args = parser.parse_args()
+
     if args.command == "db-health":
         db_health()
+    elif args.command == "stats":
+        stats()
+    elif args.command == "sync-legistar":
+        print(json.dumps(sync_legistar(days_back=args.days_back), sort_keys=True))
+    elif args.command == "sync-zoning":
+        print(json.dumps(sync_residential_zoning(), sort_keys=True))
+    elif args.command == "sync-all":
+        sync_all(days_back=args.legistar_days_back)
 
 
 if __name__ == "__main__":

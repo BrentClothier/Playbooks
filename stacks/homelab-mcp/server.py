@@ -84,6 +84,32 @@ PORTAINER_VERIFY_SSL = os.getenv("PORTAINER_VERIFY_SSL", "true").lower() in {
     "on",
 }
 
+# Humboldt public-records read-only query API
+HUMBOLDT_API_URL = os.getenv(
+    "HUMBOLDT_API_URL",
+    "http://192.168.86.173:8780",
+).rstrip("/")
+
+
+async def humboldt_get(
+    path: str,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    """
+    Read from the narrow Humboldt public-records query API.
+
+    The API exposes public-government data through fixed read-only endpoints;
+    it does not accept SQL or state-changing requests.
+    """
+    async with httpx.AsyncClient(
+        base_url=HUMBOLDT_API_URL,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+        return response.json()
+
+
 # UniFi Network local Integration API (optional until configured)
 UNIFI_URL = os.getenv("UNIFI_URL", "").rstrip("/")
 UNIFI_API_KEY = os.getenv("UNIFI_API_KEY", "")
@@ -1190,6 +1216,8 @@ async def homelab_mcp_info() -> dict[str, Any]:
         integrations.append("portainer")
     if unifi_ready():
         integrations.append("unifi")
+    if HUMBOLDT_API_URL:
+        integrations.append("humboldt-public-records")
 
     return {
         "name": "HomeLab MCP",
@@ -1225,7 +1253,93 @@ async def homelab_mcp_info() -> dict[str, Any]:
         "unifi_syslog_last_source_ip": latest_event["last_source_ip"],
         "unifi_event_retention_days": UNIFI_EVENT_RETENTION_DAYS,
         "unifi_event_count": unifi_event_count(),
+        "humboldt_api_url": HUMBOLDT_API_URL,
     }
+
+
+# -------------------------
+# Humboldt public-records read-only tools
+# -------------------------
+
+@mcp.tool
+async def humboldt_data_status() -> Any:
+    """
+    Return health and row counts for the Humboldt public-records data platform.
+
+    This is a read-only status endpoint over ingested public government data.
+    """
+    return await humboldt_get("/health")
+
+
+@mcp.tool
+async def humboldt_meetings(
+    days_back: int = 90,
+    limit: int = 50,
+) -> Any:
+    """
+    Return recent Humboldt County public meetings ingested from Legistar.
+
+    Use this for factual meeting/agenda research. Live source documents remain
+    authoritative if a record is legally or operationally consequential.
+    """
+    safe_days = max(1, min(days_back, 3650))
+    safe_limit = max(1, min(limit, 200))
+    return await humboldt_get(
+        "/v1/meetings",
+        params={"days_back": safe_days, "limit": safe_limit},
+    )
+
+
+@mcp.tool
+async def humboldt_search_agenda(
+    query: str,
+    limit: int = 25,
+) -> Any:
+    """
+    Search ingested Humboldt County agenda/minutes text.
+
+    This is factual public-record retrieval only. Results include source links
+    where Legistar supplied them so important claims can be verified upstream.
+    """
+    safe_query = str(query or "").strip()
+    if len(safe_query) < 2:
+        raise ValueError("query must contain at least 2 characters")
+    safe_limit = max(1, min(limit, 100))
+    return await humboldt_get(
+        "/v1/agenda/search",
+        params={"q": safe_query, "limit": safe_limit},
+    )
+
+
+@mcp.tool
+async def humboldt_zoning(
+    parcel: str | None = None,
+    zone: str | None = None,
+    limit: int = 50,
+) -> Any:
+    """
+    Query ingested Humboldt County residential zoning polygons by parcel/zone.
+
+    County GIS data is planning/reference data and should be verified against
+    authoritative legal records before property-specific decisions.
+    """
+    params: dict[str, Any] = {
+        "limit": max(1, min(limit, 200)),
+    }
+    if parcel:
+        params["parcel"] = parcel
+    if zone:
+        params["zone"] = zone
+    return await humboldt_get("/v1/zoning", params=params)
+
+
+@mcp.tool
+async def humboldt_ingest_runs(limit: int = 20) -> Any:
+    """Return recent Humboldt public-record ingestion run status."""
+    return await humboldt_get(
+        "/v1/ingest-runs",
+        params={"limit": max(1, min(limit, 100))},
+    )
 
 
 # -------------------------
@@ -1401,11 +1515,12 @@ async def semaphore_setup_humboldt_automation() -> Any:
     """
     One-time, narrowly scoped setup for the Humboldt public-records project.
 
-    This creates the dedicated Semaphore project if needed and ensures three
-    HomeLab IaC templates exist in project 1:
+    This creates the dedicated Semaphore project if needed and ensures four
+    scoped Humboldt templates exist in project 1:
       - Humboldt OpenTofu Plan
       - Humboldt OpenTofu Apply
       - Humboldt Data Bootstrap
+      - Humboldt Public Data Sync
 
     It intentionally does not expose generic project/template administration.
     """
@@ -1482,6 +1597,21 @@ async def semaphore_setup_humboldt_automation() -> Any:
                 "environment_ids": [2],
                 "name": "Humboldt Data Bootstrap",
                 "playbook": "ansible/humboldt/bootstrap_humboldt_data.yml",
+                "arguments": "[]",
+                "app": "ansible",
+                "git_branch": "main",
+            },
+        },
+        {
+            "name": "Humboldt Public Data Sync",
+            "payload": {
+                "project_id": home_project_id,
+                "inventory_id": 3,
+                "repository_id": 1,
+                "environment_id": 2,
+                "environment_ids": [2],
+                "name": "Humboldt Public Data Sync",
+                "playbook": "ansible/humboldt/run_etl.yml",
                 "arguments": "[]",
                 "app": "ansible",
                 "git_branch": "main",

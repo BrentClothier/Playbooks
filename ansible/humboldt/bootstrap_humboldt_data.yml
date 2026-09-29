@@ -164,9 +164,47 @@
       until: humboldt_db_health.rc == 0
       changed_when: false
 
+    - name: Apply idempotent database schema
+      ansible.builtin.shell: |
+        set -eu
+        docker compose exec -T db sh -lc '
+          set -eu
+          for sql in /docker-entrypoint-initdb.d/*.sql; do
+            psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$sql"
+          done
+        '
+      args:
+        executable: /bin/bash
+        chdir: "{{ humboldt_stack_dir }}"
+      changed_when: false
+
     - name: Verify PostGIS and pgvector
       ansible.builtin.command:
         cmd: docker compose --profile tools run --rm etl db-health
         chdir: "{{ humboldt_stack_dir }}"
       register: humboldt_extension_health
       changed_when: false
+
+    - name: Wait for read-only Humboldt query API
+      ansible.builtin.command:
+        cmd: >-
+          python3 -c
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8780/health', timeout=5).read()"
+      register: humboldt_api_health
+      retries: 20
+      delay: 3
+      until: humboldt_api_health.rc == 0
+      changed_when: false
+
+    - name: Run initial public-records sync
+      ansible.builtin.command:
+        cmd: >-
+          docker compose --profile tools run --rm etl
+          sync-all --legistar-days-back 730
+        chdir: "{{ humboldt_stack_dir }}"
+      register: humboldt_initial_sync
+      changed_when: false
+
+    - name: Show initial public-records sync result
+      ansible.builtin.debug:
+        var: humboldt_initial_sync.stdout_lines

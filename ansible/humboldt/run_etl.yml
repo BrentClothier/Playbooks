@@ -1,19 +1,76 @@
 ---
-- name: Run Humboldt ETL command on the data VM
+- name: Discover Humboldt data VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    humboldt_vm_name: "humboldt-data01.home"
+    humboldt_vm_host: "192.168.86.173"
+    humboldt_vm_user: "root"
+
+  tasks:
+    - name: Wait for Humboldt data VM SSH
+      ansible.builtin.wait_for:
+        host: "{{ humboldt_vm_host }}"
+        port: 22
+        delay: 0
+        timeout: 120
+
+    - name: Add Humboldt data VM to in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ humboldt_vm_name }}"
+        ansible_host: "{{ humboldt_vm_host }}"
+        ansible_user: "{{ humboldt_vm_user }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+        groups: humboldt_data
+
+- name: Synchronize Humboldt public records
   hosts: humboldt_data
   become: true
   gather_facts: false
 
   vars:
     humboldt_stack_dir: /opt/humboldt-data
-    humboldt_etl_command: db-health
 
   tasks:
-    - name: Run Humboldt ETL utility
+    - name: Copy current Humboldt stack definition and ETL code
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../stacks/humboldt-data/"
+        dest: "{{ humboldt_stack_dir }}/"
+        mode: preserve
+
+    - name: Rebuild query and ETL image
+      ansible.builtin.command:
+        cmd: docker compose build api etl
+        chdir: "{{ humboldt_stack_dir }}"
+      changed_when: true
+
+    - name: Ensure database and query API are running
+      ansible.builtin.command:
+        cmd: docker compose up -d db api
+        chdir: "{{ humboldt_stack_dir }}"
+      changed_when: false
+
+    - name: Apply idempotent database schema
+      ansible.builtin.shell: |
+        set -eu
+        docker compose exec -T db sh -lc '
+          set -eu
+          for sql in /docker-entrypoint-initdb.d/*.sql; do
+            psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$sql"
+          done
+        '
+      args:
+        executable: /bin/bash
+        chdir: "{{ humboldt_stack_dir }}"
+      changed_when: false
+
+    - name: Run Humboldt public-records sync
       ansible.builtin.command:
         cmd: >-
           docker compose --profile tools run --rm etl
-          {{ humboldt_etl_command }}
+          sync-all --legistar-days-back 730
         chdir: "{{ humboldt_stack_dir }}"
       register: humboldt_etl
       changed_when: false

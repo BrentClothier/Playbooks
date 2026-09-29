@@ -1,0 +1,30 @@
+name: Validate Humboldt data platform
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "stacks/humboldt-data/**"
+      - "ansible/humboldt/**"
+      - ".github/workflows/humboldt-data-validate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate ETL Python syntax
+        run: python -m py_compile stacks/humboldt-data/etl/humboldt_etl/*.py
+
+      - name: Validate Docker Compose
+        run: docker compose -f stacks/humboldt-data/docker-compose.yml config
+
+      - name: Build Humboldt images
+        run: docker compose -f stacks/humboldt-data/docker-compose.yml build db api etl
