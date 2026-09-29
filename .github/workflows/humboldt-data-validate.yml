@@ -23,6 +23,14 @@ jobs:
       - name: Validate ETL Python syntax
         run: python -m py_compile stacks/humboldt-data/etl/humboldt_etl/*.py
 
+      - name: Create CI environment file
+        run: |
+          cat > stacks/humboldt-data/.env <<'EOF'
+          POSTGRES_DB=humboldt
+          POSTGRES_USER=humboldt_admin
+          POSTGRES_PASSWORD=ci-only-placeholder
+          EOF
+
       - name: Validate Docker Compose
         run: docker compose -f stacks/humboldt-data/docker-compose.yml config
 
