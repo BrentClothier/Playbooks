@@ -1,0 +1,21 @@
+--- a/src/core/arm/dynarmic/arm_dynarmic_64.cpp
++++ b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
+@@
+ void ArmDynarmic64::MakeJit(Common::PageTable* page_table, std::size_t address_space_bits) {
+     Dynarmic::A64::UserConfig config;
++
++    const auto requested_cpu_accuracy = Settings::values.cpu_accuracy.GetValue();
++    const bool v62_minecraft_accurate =
++        m_process != nullptr && m_process->GetProgramId() == 0x0100D71004694000ULL;
++    const auto effective_cpu_accuracy =
++        v62_minecraft_accurate ? Settings::CpuAccuracy::Accurate : requested_cpu_accuracy;
++
++    if (v62_minecraft_accurate) {
++        LOG_WARNING(Core_ARM,
++                    "V62_FIX MinecraftCpuAccuracy requested={} effective={} address_space_bits={}",
++                    static_cast<u32>(requested_cpu_accuracy),
++                    static_cast<u32>(effective_cpu_accuracy), address_space_bits);
++    }
+@@
+-    switch (Settings::values.cpu_accuracy.GetValue()) {
++    switch (effective_cpu_accuracy) {
