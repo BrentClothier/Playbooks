@@ -8,6 +8,8 @@
 4. Do not expose arbitrary shell, SSH, or Docker-socket access to ChatGPT.
 5. Never commit secrets to this repository.
 6. Do not treat a successful API response as proof of an asynchronous deployment; verify final state.
+7. Treat Git/IaC as the target source of truth for reproducible infrastructure.
+8. Preserve the NFS storage LXC as the current authoritative user-data tier; infrastructure reproducibility does not replace data backup.
 
 ## Portainer incident and lesson
 
@@ -23,6 +25,20 @@ The recovery led to several permanent rules:
 
 Portainer server and active agents were subsequently updated to 2.45.1 and the guarded path was successfully tested against `family-archive`.
 
+## Current transition goal
+
+The HomeLab is actively moving from manually configured workloads toward a reproducible Git/IaC model. ChatGPT, Semaphore, MCP, and future Codex jobs are intended to accelerate that migration.
+
+The practical target is:
+
+```text
+GitHub definitions -> Semaphore/Codex validation -> controlled deployment
+                                      |
+                                      +-> live-state verification
+```
+
+Manual Portainer stacks should gradually become Git-backed where appropriate. Secrets and mutable application data must stay outside the public repository.
+
 ## Current known issues / cleanup candidates
 
 - `homelab-mcp` remains editor-managed in Portainer. Its Compose source is still in Git, but restoring a clean Git-backed Portainer association is a future housekeeping task.
@@ -30,6 +46,8 @@ Portainer server and active agents were subsequently updated to 2.45.1 and the g
 - Some workloads are historical/manual Portainer stacks rather than Git-backed stacks.
 - Redis/Valkey on Family Archive has reported the common Linux `vm.overcommit_memory` warning. This is worth fixing on the Docker host when that project resumes.
 - The Humboldt data platform is designed but not yet provisioned.
+- The NFS storage LXC contains the real/authoritative data and currently has no independent backup due to storage-capacity limits.
+- PBS is intended to be retired eventually, but only after infrastructure is reproducible and irreplaceable NFS data has an independent backup path.
 
 ## Change-risk model
 

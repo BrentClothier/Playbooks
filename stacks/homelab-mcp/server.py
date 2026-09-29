@@ -11,7 +11,42 @@ import httpx
 from fastmcp import FastMCP
 from starlette.responses import JSONResponse
 
-mcp = FastMCP("HomeLab MCP")
+MCP_INSTRUCTIONS = """
+This server manages the Clothier HomeLab. For HomeLab planning, architecture,
+troubleshooting, migrations, or state-changing work, consult the HomeLab
+knowledge base when intent, history, safety rules, or project context may
+matter. Use homelab_kb_search and homelab_kb_read rather than relying on model
+memory. Live APIs are authoritative for current runtime state; the knowledge
+base is authoritative for intended architecture, conventions, and decisions.
+Never infer or request secret values from the knowledge base.
+"""
+
+mcp = FastMCP(
+    name="HomeLab MCP",
+    instructions=MCP_INSTRUCTIONS,
+)
+
+HOMELAB_KB_BASE_URL = os.getenv(
+    "HOMELAB_KB_BASE_URL",
+    "https://raw.githubusercontent.com/BrentClothier/Playbooks/main/docs/homelab",
+).rstrip("/")
+
+HOMELAB_KB_DOCUMENTS: dict[str, str] = {
+    "overview": "README.md",
+    "architecture": "architecture.md",
+    "inventory": "inventory.md",
+    "inventory_yaml": "inventory.yaml",
+    "automation": "automation.md",
+    "storage_backups": "storage-backups.md",
+    "operations": "operations.md",
+    "model_access": "model-access.md",
+    "humboldt": "projects/humboldt.md",
+    "adr_control_plane": "decisions/0001-controlled-mcp-control-plane.md",
+    "adr_portainer_redeploy": "decisions/0002-portainer-git-redeploy-safety.md",
+    "adr_iac_state": "decisions/0003-isolate-project-iac-state.md",
+    "adr_git_source_of_truth": "decisions/0004-git-source-of-truth.md",
+}
+
 
 # Proxmox
 PVE_URL = os.environ["PVE_URL"].rstrip("/")
@@ -83,6 +118,144 @@ _unifi_syslog_state: dict[str, Any] = {
     "last_received_at": None,
     "last_source_ip": None,
 }
+
+
+def _homelab_kb_resolve(document: str) -> tuple[str, str]:
+    """
+    Resolve a public-safe KB document name or exact relative path.
+
+    The allowlist prevents this read-only helper from becoming a generic HTTP
+    fetcher or repository browser.
+    """
+    requested = str(document or "").strip()
+    if requested in HOMELAB_KB_DOCUMENTS:
+        return requested, HOMELAB_KB_DOCUMENTS[requested]
+
+    for name, path in HOMELAB_KB_DOCUMENTS.items():
+        if requested == path:
+            return name, path
+
+    raise ValueError(
+        "Unknown HomeLab KB document. Call homelab_kb_index() for the "
+        "allowlisted document names."
+    )
+
+
+async def _homelab_kb_fetch(document: str) -> tuple[str, str, str]:
+    name, path = _homelab_kb_resolve(document)
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(15.0),
+        follow_redirects=True,
+    ) as client:
+        response = await client.get(f"{HOMELAB_KB_BASE_URL}/{path}")
+        response.raise_for_status()
+        content = response.text
+
+    if len(content) > 200_000:
+        raise RuntimeError(
+            f"HomeLab KB document {path!r} exceeded the 200 KB safety limit."
+        )
+
+    return name, path, content
+
+
+@mcp.tool
+async def homelab_kb_index() -> Any:
+    """
+    List the HomeLab knowledge-base documents available to this MCP.
+
+    Models should consult this KB when a request depends on architecture intent,
+    migration plans, safety rules, known exceptions, or historical decisions.
+    Use the live Proxmox/Portainer/Semaphore/UniFi tools for current runtime
+    state instead of treating the KB as monitoring data.
+    """
+    return {
+        "source": "BrentClothier/Playbooks:docs/homelab",
+        "runtime_state_authority": "live HomeLab APIs",
+        "intent_and_history_authority": "HomeLab knowledge base",
+        "documents": [
+            {"name": name, "path": path}
+            for name, path in HOMELAB_KB_DOCUMENTS.items()
+        ],
+    }
+
+
+@mcp.tool
+async def homelab_kb_read(document: str) -> Any:
+    """
+    Read one allowlisted HomeLab knowledge-base document.
+
+    Use this after homelab_kb_search identifies a relevant document, or when a
+    known topic such as operations, storage/backups, automation, or Humboldt
+    architecture is directly relevant to the user's request.
+    """
+    name, path, content = await _homelab_kb_fetch(document)
+    return {
+        "name": name,
+        "path": path,
+        "content": content,
+    }
+
+
+@mcp.tool
+async def homelab_kb_search(query: str, max_results: int = 8) -> Any:
+    """
+    Search the public-safe HomeLab knowledge base for task-relevant context.
+
+    IMPORTANT: Prefer this tool before planning or executing HomeLab changes
+    when the request may depend on design intent, migration state, known
+    exceptions, prior incidents, storage/backup policy, or project history.
+    Live APIs remain authoritative for what is running right now.
+    """
+    normalized = str(query or "").strip().lower()
+    if not normalized:
+        raise ValueError("query must not be empty")
+
+    terms = [
+        term for term in re.split(r"\s+", normalized)
+        if len(term) >= 2
+    ]
+    if not terms:
+        terms = [normalized]
+
+    matches: list[dict[str, Any]] = []
+    for name, path in HOMELAB_KB_DOCUMENTS.items():
+        try:
+            _, _, content = await _homelab_kb_fetch(name)
+        except httpx.HTTPError:
+            continue
+
+        lines = content.splitlines()
+        for index, line in enumerate(lines):
+            lowered = line.lower()
+            score = sum(lowered.count(term) for term in terms)
+            if not score:
+                continue
+
+            start = max(0, index - 1)
+            end = min(len(lines), index + 2)
+            matches.append(
+                {
+                    "document": name,
+                    "path": path,
+                    "score": score,
+                    "line": index + 1,
+                    "snippet": "\n".join(lines[start:end]),
+                }
+            )
+
+    safe_limit = max(1, min(int(max_results), 20))
+    matches.sort(
+        key=lambda item: (
+            -int(item["score"]),
+            str(item["path"]),
+            int(item["line"]),
+        )
+    )
+    return {
+        "query": query,
+        "results": matches[:safe_limit],
+    }
 
 
 async def pve_get(path: str, params: dict[str, Any] | None = None) -> Any:

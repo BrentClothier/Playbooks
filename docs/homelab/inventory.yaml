@@ -35,7 +35,7 @@ important_guests:
   - name: NFS
     platform: lxc
     node: proxmox2
-    purpose: network-file-storage
+    purpose: authoritative-user-data-storage
   - name: Linux-Mint
     platform: qemu
     node: proxmox3
@@ -65,3 +65,26 @@ future_capabilities:
     available: true
     intended_pattern: semaphore-launches-isolated-codex-job
     preferred_output: git-branch-or-pull-request
+
+
+storage_policy:
+  infrastructure_backup_cadence: weekly
+  authoritative_data_tier: NFS
+  authoritative_data_independent_backup: false
+  storage_space_redundant: true
+  notes:
+    - NFS real data currently lacks independent backup due to capacity limits
+    - redundancy is not considered a substitute for backup
+
+transition:
+  goal: git-and-iac-source-of-truth
+  docker_target:
+    - compose-and-deployment-definitions-in-github
+    - reproducible-non-secret-configuration-in-github
+  mutable_data_target: persistent-storage-not-git
+  pbs:
+    intended_future_state: retired
+    prerequisite:
+      - reproducible-infrastructure
+      - independent-backup-for-authoritative-data
+  chatgpt_role: assist-and-accelerate-transition

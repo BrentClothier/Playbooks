@@ -9,3 +9,4 @@ Current records:
 - [0001-controlled-mcp-control-plane.md](0001-controlled-mcp-control-plane.md)
 - [0002-portainer-git-redeploy-safety.md](0002-portainer-git-redeploy-safety.md)
 - [0003-isolate-project-iac-state.md](0003-isolate-project-iac-state.md)
+- [0004-git-source-of-truth.md](0004-git-source-of-truth.md)

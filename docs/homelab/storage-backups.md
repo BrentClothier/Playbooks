@@ -5,39 +5,43 @@
 The environment currently uses a mix of:
 
 - node-local Proxmox storage;
-- ZFS-backed `USB_Storage_Space`;
+- redundant `USB_Storage_Space`;
 - Proxmox Backup Server storage;
-- an NFS workload;
+- an NFS storage LXC;
 - MinIO object storage.
 
-`USB_Storage_Space` is an important capacity tier and is used by the isolated Humboldt VM design.
+The NFS storage LXC contains the HomeLab's **real/authoritative user data**. Compute and container infrastructure should be treated as more replaceable than the data stored there.
+
+`USB_Storage_Space` has storage-level redundancy and is an important capacity tier. It is also used by the isolated Humboldt VM design.
 
 ## Application storage
 
-Application persistence is intentionally outside ephemeral container layers. Docker stacks should use named volumes, bind-mounted persistent paths, NFS, databases, or object storage as appropriate.
+The long-term goal is for Docker **deployment definitions and reproducible configuration** to live in GitHub as code: Compose files, Ansible, OpenTofu, templates, and other non-secret declarative configuration.
+
+Mutable application datasets, media, databases, credentials, and other state that does not belong in Git must remain on appropriate persistent storage. The NFS storage LXC is currently the primary location for the data considered "real."
+
+The environment is in the middle of a transition from manually managed infrastructure toward Git/IaC as the source of truth. A major purpose of the ChatGPT HomeLab integration is to help complete that transition.
 
 MinIO is available for object-style storage. The Humboldt data platform is expected to use it for original/raw documents once that integration is implemented.
 
-## Backup intent
+## Backup policy
 
-Proxmox Backup Server is attached to the Proxmox nodes and is the intended VM/LXC backup layer.
+The current infrastructure backup cadence is **weekly**.
 
-This document still needs the human policy details for:
+Proxmox Backup Server currently provides VM/LXC backup capability, but the NFS storage LXC's underlying real data is **not currently backed up** because sufficient secondary storage is not yet available.
 
-- backup frequency;
-- retention targets;
-- which workloads are considered irreplaceable;
-- whether application-level database dumps are required in addition to VM/container backups;
-- whether any copy is kept off-site.
+This is an acknowledged risk and should remain visible in planning. Storage redundancy protects against some device failures, but it is not a substitute for an independent backup.
 
-Until those are documented, do not assume that the mere existence of PBS means every workload meets its recovery objective.
+## Direction
 
-## Storage design direction
+The target state is increasingly reproducible infrastructure managed through Git and IaC. Once the environment can be recreated reliably, Proxmox Backup Server is intended to be retired.
 
-The long-term design may move toward more centralized NAS-backed storage, potentially including all-flash storage. Any such migration should document:
+Before PBS is retired, the real NFS data needs an independent backup strategy. IaC can replace infrastructure configuration; it cannot recreate irreplaceable user data.
 
-- failure domains;
-- ECC expectations;
-- database/iSCSI requirements;
-- backup independence from primary storage;
+Future storage changes should continue to document:
+
+- failure domains and redundancy;
+- independent backup capacity;
+- restore testing;
+- database/iSCSI requirements where applicable;
 - network bandwidth and redundancy.

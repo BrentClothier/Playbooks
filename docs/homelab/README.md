@@ -16,7 +16,15 @@ The knowledge base should contain:
 - important architectural decisions;
 - project-specific operating notes.
 
-The live systems remain authoritative for current runtime state. This knowledge base is authoritative for **intent, conventions, safety rules, and historical decisions**.
+The live systems remain authoritative for current runtime state. This knowledge base is authoritative for **intent, conventions, safety rules, migration goals, and historical decisions**.
+
+## How models discover this KB
+
+The HomeLab MCP advertises server-level instructions telling compatible clients/models to consult the KB when intent or history matters. It also exposes read-only `homelab_kb_index`, `homelab_kb_search`, and `homelab_kb_read` tools.
+
+This avoids relying on conversational memory. The model can retrieve current KB content directly from this repository, while live MCP integrations remain the source of truth for current runtime state.
+
+See [model-access.md](model-access.md) for the retrieval contract.
 
 ## Security rule
 
@@ -51,6 +59,7 @@ See [architecture.md](architecture.md), [automation.md](automation.md), and [ope
 - [automation.md](automation.md) - Semaphore, Portainer, MCP, and future Codex usage.
 - [storage-backups.md](storage-backups.md) - storage and backup intent.
 - [operations.md](operations.md) - operating rules, known issues, and cleanup candidates.
+- [model-access.md](model-access.md) - how AI clients should discover and use the KB.
 - [projects/humboldt.md](projects/humboldt.md) - Humboldt data-platform project.
 - [decisions/](decisions/) - architectural decision records.
 
