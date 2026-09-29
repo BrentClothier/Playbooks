@@ -191,7 +191,7 @@
           ansible.builtin.command:
             cmd: >-
               python3 -c
-              "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8780/health', timeout=5).read()"
+              "import urllib.request; urllib.request.urlopen('http://{{ ansible_host }}:8780/health', timeout=5).read()"
           register: humboldt_api_health
           retries: 20
           delay: 3
