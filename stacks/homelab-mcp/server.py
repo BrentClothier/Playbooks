@@ -1809,6 +1809,8 @@ async def portainer_redeploy_stack(
       * requires Env to be a real array before the write;
       * snapshots Env and Git identity privately and verifies both afterward;
       * refuses to redeploy the HomeLab MCP stack from inside itself;
+      * permits a retry from Portainer Error status only when the latest
+        deployment record is also an Error;
       * fails closed on Portainer major/minor versions not explicitly tested.
 
     force_redeploy is retained for backward compatibility with older MCP tool
@@ -1848,11 +1850,25 @@ async def portainer_redeploy_stack(
             "automation for HomeLab MCP updates."
         )
 
-    if stack.get("Status") != 1:
+    stack_status = stack.get("Status")
+    if stack_status not in {1, 4}:
         raise RuntimeError(
-            f"Portainer stack {stack_id} is not active. Refusing to redeploy "
-            "a stopped/inactive stack because that could unexpectedly start it."
+            f"Portainer stack {stack_id} is neither active nor in a failed "
+            "deployment state. Refusing to redeploy a stopped/inactive or "
+            "already-deploying stack."
         )
+
+    if stack_status == 4:
+        deployment_history = stack.get("DeploymentStatus") or []
+        if (
+            not isinstance(deployment_history, list)
+            or not deployment_history
+            or deployment_history[-1].get("Status") != 4
+        ):
+            raise RuntimeError(
+                "Portainer reports stack Error status without a matching "
+                "failed deployment record. Refusing to retry automatically."
+            )
 
     if not stack.get("WorkflowID"):
         raise RuntimeError(
