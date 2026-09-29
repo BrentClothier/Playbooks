@@ -1,0 +1,67 @@
+version: 1
+reviewed: 2026-09-29
+public_safe: true
+
+virtualization:
+  platform: proxmox
+  nodes:
+    - name: proxmox1
+      role: general-capacity
+    - name: proxmox2
+      role: primary-app-and-control-hosting
+    - name: proxmox3
+      role: app-automation-and-workstation-hosting
+
+control_plane:
+  mcp:
+    host: admin-vm01
+    transport: outbound-secure-tunnel
+    integrations:
+      proxmox: read-only
+      semaphore: controlled-write
+      portainer: guarded-write
+      unifi: read-and-telemetry
+  preferred_write_layer: semaphore
+
+important_guests:
+  - name: admin-vm01
+    platform: qemu
+    node: proxmox2
+    purpose: administrative-docker-host
+  - name: docker-vm01
+    platform: qemu
+    node: proxmox2
+    purpose: general-docker-host
+  - name: NFS
+    platform: lxc
+    node: proxmox2
+    purpose: network-file-storage
+  - name: Linux-Mint
+    platform: qemu
+    node: proxmox3
+    purpose: workstation
+  - name: Ansible
+    platform: lxc
+    node: proxmox3
+    purpose: automation
+  - name: MinIO
+    platform: lxc
+    node: proxmox3
+    purpose: object-storage
+
+portainer:
+  git_backed_stacks:
+    - authentik
+    - romm-server
+    - family-archive
+  self_managed_exception:
+    - homelab-mcp
+  notes:
+    - homelab-mcp must not redeploy itself through MCP
+    - environment variable values must never be emitted into documentation
+
+future_capabilities:
+  codex:
+    available: true
+    intended_pattern: semaphore-launches-isolated-codex-job
+    preferred_output: git-branch-or-pull-request
