@@ -113,7 +113,11 @@ Scoped templates will handle isolated OpenTofu provisioning and bootstrap automa
 ## Current status
 
 The isolated VM has been provisioned and bootstrapped. PostgreSQL, PostGIS, and
-pgvector have been verified.
+pgvector have been verified. The read-only query API is healthy.
+
+The first successful structured-data sync completed on 2026-09-29 and ingested
+161 Legistar meetings plus 129,528 residential-zoning features. Ingestion runs
+are audited in PostgreSQL so later refreshes can be checked for success/failure.
 
 The first ingestion/query implementation provides:
 
