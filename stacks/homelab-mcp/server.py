@@ -1401,8 +1401,9 @@ async def semaphore_setup_humboldt_automation() -> Any:
     """
     One-time, narrowly scoped setup for the Humboldt public-records project.
 
-    This creates the dedicated Semaphore project if needed and ensures two
+    This creates the dedicated Semaphore project if needed and ensures three
     HomeLab IaC templates exist in project 1:
+      - Humboldt OpenTofu Plan
       - Humboldt OpenTofu Apply
       - Humboldt Data Bootstrap
 
@@ -1439,6 +1440,22 @@ async def semaphore_setup_humboldt_automation() -> Any:
         raise RuntimeError("Semaphore template list was not returned as a list.")
 
     desired = [
+        {
+            "name": "Humboldt OpenTofu Plan",
+            "payload": {
+                "project_id": home_project_id,
+                "inventory_id": 2,
+                "repository_id": 1,
+                "environment_id": 2,
+                "environment_ids": [2],
+                "name": "Humboldt OpenTofu Plan",
+                "playbook": "opentofu/humboldt",
+                "arguments": "[]",
+                "app": "tofu",
+                "git_branch": "main",
+                "task_params": {"allow_override_inventory": False},
+            },
+        },
         {
             "name": "Humboldt OpenTofu Apply",
             "payload": {
