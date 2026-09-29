@@ -19,7 +19,8 @@ new = """void ArmDynarmic64::MakeJit(Common::PageTable* page_table, std::size_t 
     // configuration for Minecraft only. Do not alter the user's setting or any other title.
     const auto requested_cpu_accuracy = Settings::values.cpu_accuracy.GetValue();
     const bool v62_minecraft_accurate =
-        m_process != nullptr && m_process->GetProgramId() == 0x0100D71004694000ULL;
+        m_cb.has_value() && m_cb->m_process != nullptr &&
+        m_cb->m_process->GetProgramId() == 0x0100D71004694000ULL;
     const auto effective_cpu_accuracy =
         v62_minecraft_accurate ? Settings::CpuAccuracy::Accurate : requested_cpu_accuracy;
 
