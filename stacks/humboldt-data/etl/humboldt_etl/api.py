@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import psycopg
+from psycopg.rows import dict_row
 from fastapi import FastAPI, Query
 
 from .db import connect
@@ -20,7 +21,7 @@ app = FastAPI(
 
 def _fetch_all(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     with connect() as conn:
-        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, params)
             return list(cur.fetchall())
 

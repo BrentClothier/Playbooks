@@ -185,16 +185,47 @@
       register: humboldt_extension_health
       changed_when: false
 
-    - name: Wait for read-only Humboldt query API
-      ansible.builtin.command:
-        cmd: >-
-          python3 -c
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8780/health', timeout=5).read()"
-      register: humboldt_api_health
-      retries: 20
-      delay: 3
-      until: humboldt_api_health.rc == 0
-      changed_when: false
+    - name: Verify read-only Humboldt query API
+      block:
+        - name: Wait for read-only Humboldt query API
+          ansible.builtin.command:
+            cmd: >-
+              python3 -c
+              "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8780/health', timeout=5).read()"
+          register: humboldt_api_health
+          retries: 20
+          delay: 3
+          until: humboldt_api_health.rc == 0
+          changed_when: false
+
+      rescue:
+        - name: Inspect Humboldt query API container
+          ansible.builtin.command:
+            cmd: docker compose ps api
+            chdir: "{{ humboldt_stack_dir }}"
+          register: humboldt_api_ps
+          changed_when: false
+          failed_when: false
+
+        - name: Read Humboldt query API logs
+          ansible.builtin.command:
+            cmd: docker compose logs --no-color --tail=120 api
+            chdir: "{{ humboldt_stack_dir }}"
+          register: humboldt_api_logs
+          changed_when: false
+          failed_when: false
+
+        - name: Show Humboldt query API status
+          ansible.builtin.debug:
+            var: humboldt_api_ps.stdout_lines
+
+        - name: Show Humboldt query API logs
+          ansible.builtin.debug:
+            var: humboldt_api_logs.stdout_lines
+
+        - name: Fail after collecting Humboldt query API diagnostics
+          ansible.builtin.fail:
+            msg: "Humboldt query API did not become healthy; diagnostics are shown above."
 
     - name: Run initial public-records sync
       ansible.builtin.command:
