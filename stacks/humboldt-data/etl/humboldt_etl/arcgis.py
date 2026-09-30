@@ -41,6 +41,13 @@ def _first_coordinate(value: Any) -> tuple[float, float] | None:
     return None
 
 
+def _clean_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
 def _validate_humboldt_geometry(geometry: dict[str, Any]) -> None:
     coordinate = _first_coordinate(geometry.get("coordinates"))
     if coordinate is None:
@@ -69,7 +76,7 @@ def _query_page(
     response = client.get(
         f"{ZONING_LAYER}/query",
         params={
-            "where": "1=1",
+            "where": "APN_12 IS NOT NULL AND APN_12 <> ' '",
             "outFields": "OBJECTID,APN_12,ZONING,DESCRIPTIO",
             "returnGeometry": "true",
             "outSR": "4326",
@@ -136,6 +143,12 @@ def sync_residential_zoning() -> dict[str, int]:
                         if object_id is None:
                             continue
 
+                        parcel = _clean_text(props.get("APN_12"))
+                        if parcel is None:
+                            continue
+                        zone = _clean_text(props.get("ZONING"))
+                        description = _clean_text(props.get("DESCRIPTIO"))
+
                         geometry = feature.get("geometry")
                         if geometry and not geometry_validated:
                             if not isinstance(geometry, dict):
@@ -181,9 +194,9 @@ def sync_residential_zoning() -> dict[str, int]:
                             (
                                 int(object_id),
                                 source_id,
-                                props.get("APN_12"),
-                                props.get("ZONING"),
-                                props.get("DESCRIPTIO"),
+                                parcel,
+                                zone,
+                                description,
                                 Jsonb(props),
                                 geometry_json,
                                 geometry_json,
