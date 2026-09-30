@@ -424,7 +424,7 @@ replace_once(
                             "V63_DIAG RasterizerCachePageBefore vaddr={:#016x} cached={} "
                             "type={} backing={:#016x}",
                             page_vaddr, cached, static_cast<u32>(page_type),
-                            GetInteger(current_page_table->entries[vaddr >> YUZU_PAGEBITS].addr));
+                            current_page_table->entries[vaddr >> YUZU_PAGEBITS].addr);
             }
             if (cached) {
 """,
@@ -454,7 +454,7 @@ replace_once(
                             "V63_DIAG RasterizerCachePageAfter vaddr={:#016x} cached={} "
                             "type={} backing={:#016x}",
                             page_vaddr, cached, static_cast<u32>(after_type),
-                            GetInteger(current_page_table->entries[page_vaddr >> YUZU_PAGEBITS].addr));
+                            current_page_table->entries[page_vaddr >> YUZU_PAGEBITS].addr);
             }
         }
     }
