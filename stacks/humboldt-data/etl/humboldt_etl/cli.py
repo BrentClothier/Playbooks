@@ -5,6 +5,7 @@ import json
 
 from .arcgis import sync_residential_zoning
 from .db import connect
+from .documents import sync_legistar_attachments
 from .legistar import sync_legistar
 
 
@@ -38,26 +39,29 @@ def stats() -> None:
                 SELECT
                     (SELECT count(*) FROM gov.meetings),
                     (SELECT count(*) FROM gov.agenda_items),
-                    (SELECT count(*) FROM gis.residential_zoning)
+                    (SELECT count(*) FROM gis.residential_zoning),
+                    (SELECT count(*) FROM core.documents)
                 """
             )
-            meetings, agenda_items, zoning = cur.fetchone()
+            meetings, agenda_items, zoning, documents = cur.fetchone()
     print(
         json.dumps(
             {
                 "meetings": meetings,
                 "agenda_items": agenda_items,
                 "zoning_features": zoning,
+                "documents": documents,
             },
             sort_keys=True,
         )
     )
 
 
-def sync_all(days_back: int) -> None:
+def sync_all(days_back: int, document_limit: int) -> None:
     result = {
         "legistar": sync_legistar(days_back=days_back),
         "residential_zoning": sync_residential_zoning(),
+        "documents": sync_legistar_attachments(limit=document_limit),
     }
     print(json.dumps(result, sort_keys=True))
 
@@ -74,7 +78,7 @@ def main() -> None:
     )
     subparsers.add_parser(
         "stats",
-        help="Show row counts for the first structured public-record datasets.",
+        help="Show row counts for structured records and captured documents.",
     )
 
     legistar = subparsers.add_parser(
@@ -85,14 +89,21 @@ def main() -> None:
 
     subparsers.add_parser(
         "sync-zoning",
-        help="Ingest Humboldt County residential zoning polygons from ArcGIS.",
+        help="Ingest Humboldt County parcel zoning polygons from ArcGIS.",
     )
+
+    documents = subparsers.add_parser(
+        "sync-documents",
+        help="Capture pending Legistar attachments into MinIO and register provenance.",
+    )
+    documents.add_argument("--limit", type=int, default=100)
 
     sync = subparsers.add_parser(
         "sync-all",
-        help="Run the first Humboldt public-records ingestion set.",
+        help="Run structured ingestion plus a bounded document-capture batch.",
     )
     sync.add_argument("--legistar-days-back", type=int, default=730)
+    sync.add_argument("--document-limit", type=int, default=100)
 
     args = parser.parse_args()
 
@@ -104,8 +115,13 @@ def main() -> None:
         print(json.dumps(sync_legistar(days_back=args.days_back), sort_keys=True))
     elif args.command == "sync-zoning":
         print(json.dumps(sync_residential_zoning(), sort_keys=True))
+    elif args.command == "sync-documents":
+        print(json.dumps(sync_legistar_attachments(limit=args.limit), sort_keys=True))
     elif args.command == "sync-all":
-        sync_all(days_back=args.legistar_days_back)
+        sync_all(
+            days_back=args.legistar_days_back,
+            document_limit=args.document_limit,
+        )
 
 
 if __name__ == "__main__":

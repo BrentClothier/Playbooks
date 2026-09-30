@@ -34,6 +34,7 @@ def health() -> dict[str, Any]:
             (SELECT count(*) FROM gov.meetings) AS meetings,
             (SELECT count(*) FROM gov.agenda_items) AS agenda_items,
             (SELECT count(*) FROM gis.residential_zoning) AS zoning_features,
+            (SELECT count(*) FROM core.documents) AS documents,
             (
                 SELECT max(finished_at)
                 FROM audit.ingest_runs

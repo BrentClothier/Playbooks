@@ -66,15 +66,52 @@
         chdir: "{{ humboldt_stack_dir }}"
       changed_when: false
 
+    - name: Check Humboldt object-storage configuration
+      ansible.builtin.shell: |
+        set -eu
+        test -f .env
+        grep -q '^MINIO_ENDPOINT=' .env
+        grep -q '^MINIO_ACCESS_KEY=' .env
+        grep -q '^MINIO_SECRET_KEY=' .env
+        grep -q '^MINIO_BUCKET=' .env
+      args:
+        executable: /bin/bash
+        chdir: "{{ humboldt_stack_dir }}"
+      register: humboldt_minio_config
+      changed_when: false
+      failed_when: false
+      no_log: true
+
     - name: Run Humboldt public-records sync
       ansible.builtin.command:
         cmd: >-
           docker compose --profile tools run --rm etl
-          sync-all --legistar-days-back 730
+          sync-all --legistar-days-back 730 --document-limit 100
         chdir: "{{ humboldt_stack_dir }}"
       register: humboldt_etl
       changed_when: false
+      when: humboldt_minio_config.rc == 0
+
+    - name: Run structured sync until object storage is configured
+      ansible.builtin.shell: |
+        set -eu
+        docker compose --profile tools run --rm etl sync-legistar --days-back 730
+        docker compose --profile tools run --rm etl sync-zoning
+      args:
+        executable: /bin/bash
+        chdir: "{{ humboldt_stack_dir }}"
+      register: humboldt_etl_structured
+      changed_when: false
+      when: humboldt_minio_config.rc != 0
+
+    - name: Explain deferred document capture
+      ansible.builtin.debug:
+        msg: >-
+          Structured Humboldt sync completed. Document capture is deferred until
+          dedicated MinIO credentials are configured in the local Humboldt .env.
+      when: humboldt_minio_config.rc != 0
 
     - name: Show ETL result
       ansible.builtin.debug:
         var: humboldt_etl.stdout_lines
+      when: humboldt_minio_config.rc == 0
