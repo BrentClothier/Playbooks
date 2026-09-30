@@ -43,3 +43,25 @@ not explain intent, consult the KB rather than guessing.
 
 The KB is public-safe and is not a secret store. Models must not expect it to
 contain credentials or request that secret values be added for convenience.
+
+
+## ChatGPT action refresh
+
+ChatGPT workspaces keep a frozen snapshot of an approved custom MCP app's
+available tools and input schemas. Adding tools to the live HomeLab MCP server
+does not automatically add those actions to an already approved ChatGPT app.
+
+After adding or changing MCP tools:
+
+1. verify the new HomeLab MCP image is deployed and healthy;
+2. in ChatGPT Workspace settings, open Apps and locate the HomeLab/TestApp app;
+3. open Action control and choose Refresh to scan the live MCP server;
+4. review the diff and enable the new read-only actions as appropriate;
+5. publish/save the updated action set if the workspace UI requires it;
+6. start a new chat and verify the new actions are visible.
+
+For a draft/developer app, use its manage/edit flow and rescan tools rather
+than assuming a new chat will refresh the action schema.
+
+This refresh requirement is a ChatGPT app-registration concern, not a reason to
+redeploy the HomeLab MCP again when the live server already exposes the tools.
