@@ -684,6 +684,54 @@ async def portainer_put(
             }
 
 
+async def portainer_delete(
+    path: str,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    """
+    Make an authenticated state-changing DELETE request to Portainer.
+
+    This helper is intentionally not exposed directly as an MCP tool. Public
+    destructive actions must wrap it with action-specific safety checks.
+    Any JSON returned by Portainer is sanitized before leaving the MCP.
+    """
+    if not portainer_ready():
+        raise RuntimeError(
+            "Portainer is not configured. Set PORTAINER_URL and "
+            "PORTAINER_API_TOKEN in the HomeLab MCP container."
+        )
+
+    headers = {
+        "X-API-Key": PORTAINER_API_TOKEN,
+        "Accept": "application/json",
+    }
+
+    async with httpx.AsyncClient(
+        base_url=f"{PORTAINER_URL}/api",
+        headers=headers,
+        verify=PORTAINER_VERIFY_SSL,
+        timeout=httpx.Timeout(120.0),
+    ) as client:
+        response = await client.delete(path, params=params)
+        response.raise_for_status()
+
+        if not response.content:
+            return {
+                "ok": True,
+                "status_code": response.status_code,
+            }
+
+        try:
+            result = response.json()
+            return sanitize_portainer_payload(result)
+        except ValueError:
+            return {
+                "ok": True,
+                "status_code": response.status_code,
+                "text": response.text,
+            }
+
+
 def unifi_ready() -> bool:
     return bool(UNIFI_URL and UNIFI_API_KEY)
 
@@ -2063,6 +2111,271 @@ async def _portainer_assert_redeploy_version() -> str:
         )
 
     return str(version)
+
+
+def _portainer_compose_resource_matches(
+    item: dict[str, Any],
+    stack_name: str,
+) -> bool:
+    """
+    Return True when a Docker resource appears to belong to a Compose project.
+
+    Labels are authoritative when available. Name-prefix checks are an
+    additional fail-safe for older or unusual Compose-created resources.
+    """
+    labels = item.get("Labels") or {}
+    if isinstance(labels, dict):
+        if labels.get("com.docker.compose.project") == stack_name:
+            return True
+
+    prefixes = (f"{stack_name}_", f"{stack_name}-")
+
+    name = item.get("Name")
+    if isinstance(name, str) and name.startswith(prefixes):
+        return True
+
+    names = item.get("Names") or []
+    if isinstance(names, list):
+        for value in names:
+            if isinstance(value, str) and value.lstrip("/").startswith(prefixes):
+                return True
+
+    return False
+
+
+@mcp.tool
+async def portainer_delete_orphaned_stack(
+    stack_id: int,
+    confirm_stack_name: str,
+    cleanup_environment_id: int,
+    preflight_only: bool = True,
+) -> Any:
+    """
+    Safely remove an orphaned Docker Compose stack record from Portainer.
+
+    This destructive action is intentionally narrow. It only works when the
+    stack's original Portainer environment no longer exists. Because Portainer
+    2.45 requires a live endpointId even for orphaned-stack deletion, the caller
+    supplies a cleanup environment. Before any DELETE, this tool verifies that
+    the cleanup environment is online and contains no Compose containers,
+    networks, volumes, or Portainer stack with the same project name.
+
+    Safety behavior:
+      * locked to tested Portainer 2.45.x builds at or above 2.45.1;
+      * requires the exact current stack name as confirmation;
+      * only supports Docker Compose stacks;
+      * refuses to delete homelab-mcp;
+      * refuses if the original environment still exists;
+      * refuses if the cleanup environment is offline or has name/project
+        collisions;
+      * defaults to preflight-only;
+      * verifies that the Portainer stack record is gone after deletion.
+
+    This tool is for stale Portainer metadata cleanup during retirement or
+    migration. It is not a general live-stack deletion primitive.
+    """
+    server_version = await _portainer_assert_redeploy_version()
+    stack = await _portainer_get_private_json(f"/stacks/{stack_id}")
+
+    if not isinstance(stack, dict):
+        raise RuntimeError(
+            f"Portainer stack {stack_id} did not return a JSON object."
+        )
+
+    stack_name = str(stack.get("Name") or "")
+    original_environment_id = stack.get("EndpointId")
+    stack_type = stack.get("Type")
+
+    if not stack_name or original_environment_id is None:
+        raise RuntimeError(
+            "Portainer stack response did not include Name and EndpointId."
+        )
+
+    if confirm_stack_name != stack_name:
+        raise PermissionError(
+            "Stack-name confirmation did not exactly match the live Portainer "
+            f"stack name {stack_name!r}."
+        )
+
+    if stack_name.lower() == "homelab-mcp":
+        raise RuntimeError(
+            "Refusing to delete homelab-mcp through its own MCP service."
+        )
+
+    # Portainer uses type 2 for Docker Compose stacks.
+    if stack_type != 2:
+        raise RuntimeError(
+            "This cleanup action only supports orphaned Docker Compose stacks."
+        )
+
+    endpoints = await _portainer_get_private_json("/endpoints")
+    if not isinstance(endpoints, list):
+        raise RuntimeError("Portainer endpoint list was not returned as a list.")
+
+    original_still_exists = any(
+        endpoint.get("Id") == original_environment_id
+        for endpoint in endpoints
+        if isinstance(endpoint, dict)
+    )
+    if original_still_exists:
+        raise RuntimeError(
+            "The stack's original Portainer environment still exists. "
+            "Refusing orphan-only deletion."
+        )
+
+    cleanup_endpoint = next(
+        (
+            endpoint
+            for endpoint in endpoints
+            if isinstance(endpoint, dict)
+            and endpoint.get("Id") == cleanup_environment_id
+        ),
+        None,
+    )
+    if cleanup_endpoint is None:
+        raise RuntimeError(
+            f"Cleanup environment {cleanup_environment_id} does not exist."
+        )
+
+    if cleanup_environment_id == original_environment_id:
+        raise RuntimeError(
+            "Cleanup environment must differ from the missing original "
+            "environment."
+        )
+
+    if cleanup_endpoint.get("Status") != 1:
+        raise RuntimeError(
+            "Cleanup environment is not online. Refusing a Portainer write."
+        )
+
+    # Portainer 2.45's orphan-stack DELETE still invokes Compose teardown on
+    # the supplied live environment. Fail closed unless that environment is
+    # demonstrably free of resources for this Compose project name.
+    containers = await _portainer_get_private_json(
+        f"/endpoints/{cleanup_environment_id}/docker/containers/json",
+        params={"all": "true"},
+    )
+    networks = await _portainer_get_private_json(
+        f"/endpoints/{cleanup_environment_id}/docker/networks"
+    )
+    volumes_payload = await _portainer_get_private_json(
+        f"/endpoints/{cleanup_environment_id}/docker/volumes"
+    )
+    stacks = await _portainer_get_private_json("/stacks")
+
+    if not isinstance(containers, list):
+        raise RuntimeError(
+            "Could not verify cleanup-environment containers. Refusing delete."
+        )
+    if not isinstance(networks, list):
+        raise RuntimeError(
+            "Could not verify cleanup-environment networks. Refusing delete."
+        )
+    if not isinstance(volumes_payload, dict):
+        raise RuntimeError(
+            "Could not verify cleanup-environment volumes. Refusing delete."
+        )
+    if not isinstance(stacks, list):
+        raise RuntimeError(
+            "Could not verify Portainer stack-name collisions. Refusing delete."
+        )
+
+    volumes = volumes_payload.get("Volumes") or []
+    if not isinstance(volumes, list):
+        raise RuntimeError(
+            "Portainer volume response was unexpected. Refusing delete."
+        )
+
+    matching_containers = [
+        item for item in containers
+        if isinstance(item, dict)
+        and _portainer_compose_resource_matches(item, stack_name)
+    ]
+    matching_networks = [
+        item for item in networks
+        if isinstance(item, dict)
+        and _portainer_compose_resource_matches(item, stack_name)
+    ]
+    matching_volumes = [
+        item for item in volumes
+        if isinstance(item, dict)
+        and _portainer_compose_resource_matches(item, stack_name)
+    ]
+    matching_other_stacks = [
+        item for item in stacks
+        if isinstance(item, dict)
+        and item.get("Id") != stack_id
+        and item.get("EndpointId") == cleanup_environment_id
+        and item.get("Name") == stack_name
+    ]
+
+    collisions = {
+        "containers": len(matching_containers),
+        "networks": len(matching_networks),
+        "volumes": len(matching_volumes),
+        "other_portainer_stacks": len(matching_other_stacks),
+    }
+    if any(collisions.values()):
+        raise RuntimeError(
+            "Cleanup environment contains resources or another stack matching "
+            f"{stack_name!r}; refusing orphan-stack deletion. "
+            f"Collision counts: {collisions}"
+        )
+
+    preflight = {
+        "action": "delete_orphaned_stack_preflight",
+        "stack_id": stack_id,
+        "stack_name": stack_name,
+        "original_environment_id": original_environment_id,
+        "original_environment_missing": True,
+        "cleanup_environment_id": cleanup_environment_id,
+        "cleanup_environment_name": cleanup_endpoint.get("Name"),
+        "cleanup_environment_online": True,
+        "collision_counts": collisions,
+        "portainer_version": server_version,
+        "safe_to_delete_orphaned_stack_record": True,
+    }
+
+    if preflight_only:
+        return preflight
+
+    try:
+        result = await portainer_delete(
+            f"/stacks/{stack_id}",
+            params={
+                "endpointId": cleanup_environment_id,
+                "external": "false",
+            },
+        )
+    except httpx.HTTPStatusError as exc:
+        detail = redact_log_secrets(exc.response.text[:1000])
+        raise RuntimeError(
+            f"Portainer could not delete orphaned stack {stack_id}. "
+            f"Portainer returned {exc.response.status_code}: {detail}"
+        ) from exc
+
+    stacks_after = await _portainer_get_private_json("/stacks")
+    if not isinstance(stacks_after, list):
+        raise RuntimeError(
+            "CRITICAL: Portainer accepted the delete but the post-delete "
+            "stack-list verification failed."
+        )
+
+    if any(
+        isinstance(item, dict) and item.get("Id") == stack_id
+        for item in stacks_after
+    ):
+        raise RuntimeError(
+            "CRITICAL: Portainer returned success but the stack record still "
+            "exists. Inspect Portainer before another destructive action."
+        )
+
+    return {
+        **preflight,
+        "action": "delete_orphaned_stack",
+        "deleted": True,
+        "result": result,
+    }
 
 
 def _portainer_env_fingerprint(env: Any) -> tuple[tuple[str, Any], ...]:

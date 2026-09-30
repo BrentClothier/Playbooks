@@ -43,6 +43,7 @@ Manual Portainer stacks should gradually become Git-backed where appropriate. Se
 
 - `homelab-mcp` remains editor-managed in Portainer. Its Compose source is still in Git, but restoring a clean Git-backed Portainer association is a future housekeeping task.
 - Paperless LXC 103 has been retired and removed from Proxmox. Stale Portainer endpoint/stack metadata may remain until it is deleted from Portainer.
+- Orphaned Portainer Compose records may be removed through `portainer_delete_orphaned_stack` only after an exact-name confirmation and a successful collision-free preflight on a live cleanup environment. The action is version-locked to tested Portainer 2.45.x behavior and is not a general live-stack delete.
 - Some workloads are historical/manual Portainer stacks rather than Git-backed stacks.
 - Redis/Valkey on Family Archive has reported the common Linux `vm.overcommit_memory` warning. This is worth fixing on the Docker host when that project resumes.
 - The Humboldt data platform is provisioned and operational; current follow-up work is focused on meeting-date semantics and GIS geometry/data validation.
