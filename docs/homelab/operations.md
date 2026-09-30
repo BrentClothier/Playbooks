@@ -42,10 +42,10 @@ Manual Portainer stacks should gradually become Git-backed where appropriate. Se
 ## Current known issues / cleanup candidates
 
 - `homelab-mcp` remains editor-managed in Portainer. Its Compose source is still in Git, but restoring a clean Git-backed Portainer association is a future housekeeping task.
-- The Paperless LXC/environment is intentionally stopped and may be removed after confirming no retained data is needed.
+- Paperless LXC 103 has been retired and removed from Proxmox. Stale Portainer endpoint/stack metadata may remain until it is deleted from Portainer.
 - Some workloads are historical/manual Portainer stacks rather than Git-backed stacks.
 - Redis/Valkey on Family Archive has reported the common Linux `vm.overcommit_memory` warning. This is worth fixing on the Docker host when that project resumes.
-- The Humboldt data platform is designed but not yet provisioned.
+- The Humboldt data platform is provisioned and operational; current follow-up work is focused on meeting-date semantics and GIS geometry/data validation.
 - The NFS storage LXC contains the real/authoritative data and currently has no independent backup due to storage-capacity limits.
 - PBS is intended to be retired eventually, but only after infrastructure is reproducible and irreplaceable NFS data has an independent backup path.
 

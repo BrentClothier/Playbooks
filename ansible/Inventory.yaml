@@ -15,8 +15,6 @@ all:
           ansible_host: 192.168.86.67
         audiobookshelf.home:
           ansible_host: 192.168.86.143
-        paperless.home:
-          ansible_host: 192.168.86.36
         portainer.home:
           ansible_host: 192.168.86.43
         NFS.home:

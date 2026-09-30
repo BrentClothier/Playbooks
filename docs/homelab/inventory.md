@@ -24,7 +24,6 @@ All three nodes were online at the 2026-09-29 structured review.
 - `MealieAudioBooks` - application host.
 - `audiobookshelf` - application host.
 - `Home-Assistant` - currently stopped.
-- `paperless-ngx` - currently stopped; cleanup candidate.
 - `ha-vm01` - currently stopped.
 - `ubuntu-2504-cloud-uefi-prep` - VM template used for provisioning.
 
@@ -44,7 +43,6 @@ Current important stacks include:
 - `adiobookshelf_neo`
 - `mealie_neo`
 - `romm`
-- `paperless-ngx`
 - `qbittorrent`
 - `plex`
 - `ansible`
@@ -69,3 +67,10 @@ UniFi Network provides gateway/switch/AP management and exports retained system 
 ## Inventory update policy
 
 Do not add secret values or exact attack-surface details to this file. Prefer logical names and roles.
+
+
+## Retired workloads
+
+- `paperless-ngx` - LXC 103 was retired and removed from Proxmox on 2026-09-29.
+  Any stale Portainer endpoint/stack metadata should be removed separately from
+  Portainer; no active Paperless workload remains in Proxmox.
