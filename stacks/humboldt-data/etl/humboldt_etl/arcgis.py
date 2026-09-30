@@ -11,11 +11,48 @@ from .db import connect, ensure_source, finish_run, start_run
 
 
 ZONING_LAYER = (
-    "https://services1.arcgis.com/F1v0ufATbBQScMtY/ArcGIS/rest/services/"
-    "Residential_Zoning/FeatureServer/17"
+    "https://cty-gis-web.co.humboldt.ca.us/server/rest/services/"
+    "Parcels/Parcels/MapServer/0"
 )
+# Preserve the existing source key so the corrected ingest replaces the
+# previously imported records instead of leaving a second stale dataset behind.
 SOURCE_KEY = "humboldt-arcgis-residential-zoning"
 USER_AGENT = "HumboldtGovernmentIntelligence/1.0 (+public-records-research)"
+
+# Broad guardrail around Humboldt County. The ArcGIS query requests WGS84
+# geometry, so a coordinate outside this box almost certainly indicates that
+# the wrong public GIS service was configured.
+HUMBOLDT_BOUNDS = (-124.6, 39.8, -123.2, 41.7)
+
+
+def _first_coordinate(value: Any) -> tuple[float, float] | None:
+    if not isinstance(value, list):
+        return None
+    if (
+        len(value) >= 2
+        and isinstance(value[0], (int, float))
+        and isinstance(value[1], (int, float))
+    ):
+        return float(value[0]), float(value[1])
+    for item in value:
+        coordinate = _first_coordinate(item)
+        if coordinate is not None:
+            return coordinate
+    return None
+
+
+def _validate_humboldt_geometry(geometry: dict[str, Any]) -> None:
+    coordinate = _first_coordinate(geometry.get("coordinates"))
+    if coordinate is None:
+        raise RuntimeError("ArcGIS zoning geometry did not contain coordinates.")
+
+    longitude, latitude = coordinate
+    min_lon, min_lat, max_lon, max_lat = HUMBOLDT_BOUNDS
+    if not (min_lon <= longitude <= max_lon and min_lat <= latitude <= max_lat):
+        raise RuntimeError(
+            "ArcGIS zoning source returned geometry outside Humboldt County "
+            f"(sample coordinate {longitude}, {latitude})."
+        )
 
 
 @retry(
@@ -33,7 +70,7 @@ def _query_page(
         f"{ZONING_LAYER}/query",
         params={
             "where": "1=1",
-            "outFields": "*",
+            "outFields": "OBJECTID,APN_12,ZONING,DESCRIPTIO",
             "returnGeometry": "true",
             "outSR": "4326",
             "orderByFields": "OBJECTID",
@@ -54,15 +91,16 @@ def _query_page(
 def sync_residential_zoning() -> dict[str, int]:
     seen = 0
     written = 0
+    geometry_validated = False
 
     conn = connect()
     try:
         source_id = ensure_source(
             conn,
             source_key=SOURCE_KEY,
-            name="Humboldt County Residential Zoning",
+            name="Humboldt County Parcel Zoning",
             agency="County of Humboldt",
-            source_type="arcgis-feature-layer",
+            source_type="arcgis-map-layer",
             base_url=ZONING_LAYER,
         )
         conn.commit()
@@ -99,6 +137,14 @@ def sync_residential_zoning() -> dict[str, int]:
                             continue
 
                         geometry = feature.get("geometry")
+                        if geometry and not geometry_validated:
+                            if not isinstance(geometry, dict):
+                                raise RuntimeError(
+                                    "ArcGIS zoning geometry was not an object."
+                                )
+                            _validate_humboldt_geometry(geometry)
+                            geometry_validated = True
+
                         geometry_json = (
                             json.dumps(geometry, separators=(",", ":"))
                             if geometry
@@ -135,9 +181,9 @@ def sync_residential_zoning() -> dict[str, int]:
                             (
                                 int(object_id),
                                 source_id,
-                                props.get("PARCEL"),
-                                props.get("ZONE"),
-                                props.get("DESCRIPTION"),
+                                props.get("APN_12"),
+                                props.get("ZONING"),
+                                props.get("DESCRIPTIO"),
                                 Jsonb(props),
                                 geometry_json,
                                 geometry_json,
@@ -151,6 +197,9 @@ def sync_residential_zoning() -> dict[str, int]:
                 offset += len(features)
                 if len(features) < page_size:
                     break
+
+        if not geometry_validated:
+            raise RuntimeError("ArcGIS zoning source returned no usable geometry.")
 
         with conn.cursor() as cur:
             cur.execute(

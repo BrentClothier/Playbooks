@@ -65,6 +65,7 @@ def meetings(
             insite_url
         FROM gov.meetings
         WHERE event_date >= CURRENT_DATE - (%s * INTERVAL '1 day')
+          AND event_date <= CURRENT_DATE
         ORDER BY event_date DESC, event_id DESC
         LIMIT %s
         """,
