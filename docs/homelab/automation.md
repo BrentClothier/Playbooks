@@ -30,6 +30,20 @@ Current projects:
 
 MCP may run existing templates but does not accept arbitrary playbooks, shell commands, branches, tags, inventory overrides, or free-form arguments.
 
+### Template allowlist semantics
+
+The historical MCP setup intentionally used
+`SEMAPHORE_ALLOWED_TEMPLATES=*`. In the current source, `*` means any template
+visible to the configured Semaphore API token, including templates created
+later. A narrower configuration uses explicit `project_id:template_id` pairs.
+
+This setting changes which existing templates MCP may start; it does not widen
+the MCP input surface. The run tool still does not accept arbitrary playbooks,
+shell commands, branches, tags, inventory or survey overrides, limits, or extra
+arguments. The currently deployed allowlist value is runtime configuration and
+must be checked through safe configuration metadata rather than inferred from
+this historical record. Do not expose the raw environment or credential values.
+
 ### Important OpenTofu rule
 
 Do **not** use the generic root OpenTofu Apply path for the Humboldt project.
@@ -39,6 +53,11 @@ A prior plan showed unrelated drift against existing VMs. Humboldt therefore has
 `opentofu/humboldt/`
 
 The general rule is: new projects with materially independent lifecycle should get isolated state rather than being appended casually to the original root configuration.
+
+The HomeLab MCP/control-plane work and the Humboldt public-data application are
+separate projects even when they use the same MCP transport and Semaphore
+service. Shared transport does not merge their permissions, deployment
+lifecycle, or IaC state; Humboldt remains isolated under `opentofu/humboldt/`.
 
 ## Portainer
 
