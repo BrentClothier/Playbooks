@@ -129,6 +129,16 @@ The first ingestion/query implementation provides:
 - HomeLab MCP tools for status, meeting lookup, agenda search, zoning lookup,
   and ingest-run inspection.
 
+Service availability and ingestion freshness are separate checks. A healthy API
+does not prove that collectors completed recently; inspect the relevant source
+timestamps and audited ingestion runs before describing the dataset as current.
+
+Capacity planning must use representative workload tests. Structured API
+collection is often limited by network and database throughput, while OCR,
+embedding generation, and local inference can have materially different CPU,
+memory, accelerator, and storage-I/O requirements. Do not size future hardware
+from collector status alone.
+
 ## Next steps
 
 1. validate the first live Legistar and ArcGIS ingestion runs;

@@ -38,6 +38,24 @@ The target state is increasingly reproducible infrastructure managed through Git
 
 Before PBS is retired, the real NFS data needs an independent backup strategy. IaC can replace infrastructure configuration; it cannot recreate irreplaceable user data.
 
+The current consolidation concept is a bare-metal TrueNAS system that would
+absorb the storage and service roles now carried by `proxmox1` and `proxmox2`.
+The AOOSTAR WTR MAX (Ryzen 7 PRO 8845HS) and Minisforum N5 Pro are candidates
+under evaluation, not selected or approved hardware. SATA SSDs are preferred
+where practical to reduce noise.
+
+An earlier concept used a two-drive 2 TB mirror and 48 GB of ECC memory. Treat
+those figures as placeholders until the following are measured and verified:
+
+- current authoritative-data size and realistic growth;
+- snapshot retention and replication overhead;
+- application/database working-set requirements;
+- independent backup capacity and a tested restore path;
+- platform, CPU, firmware, and DIMM support for genuine end-to-end ECC operation.
+
+Hardware marketing that mentions ECC is not sufficient evidence that the full
+selected configuration reports and corrects memory errors.
+
 Future storage changes should continue to document:
 
 - failure domains and redundancy;
@@ -45,3 +63,6 @@ Future storage changes should continue to document:
 - restore testing;
 - database/iSCSI requirements where applicable;
 - network bandwidth and redundancy.
+
+A configured or scheduled backup is not proof of protection. Record successful
+backup completion and periodically test restoration of representative data.

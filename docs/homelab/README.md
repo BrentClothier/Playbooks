@@ -67,4 +67,4 @@ See [architecture.md](architecture.md), [automation.md](automation.md), and [ope
 
 Prefer small updates alongside infrastructure changes. Where practical, automation may refresh factual inventory, but generated data must remain public-safe and must never include secrets.
 
-Last structured review: 2026-09-29.
+Last structured review: 2026-10-17.

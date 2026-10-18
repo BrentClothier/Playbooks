@@ -10,6 +10,10 @@
 6. Do not treat a successful API response as proof of an asynchronous deployment; verify final state.
 7. Treat Git/IaC as the target source of truth for reproducible infrastructure.
 8. Preserve the NFS storage LXC as the current authoritative user-data tier; infrastructure reproducibility does not replace data backup.
+9. Treat "running" as process or guest state, not proof that an application is healthy; verify the service-level health signal that matters.
+10. Treat backup configuration and successful backup/restore evidence separately.
+11. Do not delete an unknown guest merely because its purpose or current state is unclear.
+12. Do not hardcode volatile telemetry, utilization, availability, or prices into durable KB guidance.
 
 ## Portainer incident and lesson
 
@@ -49,6 +53,9 @@ Manual Portainer stacks should gradually become Git-backed where appropriate. Se
 - The Humboldt data platform is provisioned and operational; current follow-up work is focused on meeting-date semantics and GIS geometry/data validation.
 - The NFS storage LXC contains the real/authoritative data and currently has no independent backup due to storage-capacity limits.
 - PBS is intended to be retired eventually, but only after infrastructure is reproducible and irreplaceable NFS data has an independent backup path.
+- The Home Assistant VMs are intentionally stopped pending a later rebuild; their stopped state is not a cleanup signal.
+- Older guests with IDs `109` and `111` have not been confirmed stale. Preserve them until ownership, data value, and purpose are established.
+- The `proxmox1`/`proxmox2` to TrueNAS consolidation is provisional. No purchase, migration, or service move is approved by the planning record alone.
 
 ## Change-risk model
 
@@ -60,3 +67,17 @@ Classify a proposed operation mentally before executing:
 - **destructive:** delete volumes, data, backups, credentials, or state.
 
 The higher the class, the more explicit the verification and rollback plan should be.
+
+## Verification semantics
+
+Use live APIs for runtime state and this KB for intent and history. Interpret
+both narrowly:
+
+- a running guest or container does not establish application health;
+- a configured backup job does not establish recent success or restorability;
+- a healthy Humboldt API does not establish ingestion freshness; inspect source
+  timestamps and ingestion-run audit records;
+- high allocated memory does not establish host pressure; inspect actual demand,
+  contention, and workload intent;
+- transient telemetry and market prices belong in dated analysis, not durable
+  inventory or policy.

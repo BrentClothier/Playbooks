@@ -74,6 +74,15 @@ MCP is intended for:
 
 It is not intended to expose unrestricted network configuration.
 
+## Future TrueNAS integration
+
+There is no existing TrueNAS MCP integration. If the consolidation plan is
+approved and implemented, expose TrueNAS through purpose-built, narrow MCP
+operations with read-only discovery first. Do not expose a generic shell,
+unrestricted API proxy, broad storage administration, or implicit dataset/share
+deletion. State-changing actions require explicit scope, preflight validation,
+and separate approval appropriate to their risk.
+
 ## Future Codex execution
 
 A ChatGPT/Codex access token is available for future automation.

@@ -6,9 +6,9 @@ This is a logical inventory, not a real-time monitoring dashboard. Runtime statu
 
 | Node | Role |
 | --- | --- |
-| `proxmox1` | General Proxmox capacity |
-| `proxmox2` | Primary HomeLab application/control workloads and major storage attachment |
-| `proxmox3` | Application workloads, workstation VM, automation, and object storage |
+| `proxmox1` | Small adjacent node providing general Proxmox capacity |
+| `proxmox2` | Bottom 3U Core i5 chassis; primary application/control workloads and major storage attachment |
+| `proxmox3` | Retained small-form-factor gaming system; application workloads, workstation VM, automation, and object storage |
 
 All three nodes were online at the 2026-09-29 structured review.
 
@@ -23,8 +23,8 @@ All three nodes were online at the 2026-09-29 structured review.
 - `Portainer` - Portainer server workload.
 - `MealieAudioBooks` - application host.
 - `audiobookshelf` - application host.
-- `Home-Assistant` - currently stopped.
-- `ha-vm01` - currently stopped.
+- `Home-Assistant` - intentionally stopped pending a later rebuild.
+- `ha-vm01` - intentionally stopped pending a later rebuild.
 - `ubuntu-2504-cloud-uefi-prep` - VM template used for provisioning.
 
 ### proxmox3
@@ -67,6 +67,10 @@ UniFi Network provides gateway/switch/AP management and exports retained system 
 ## Inventory update policy
 
 Do not add secret values or exact attack-surface details to this file. Prefer logical names and roles.
+
+Do not infer that an unknown or stopped guest is stale. In particular, older
+guests with IDs `109` and `111` have not been confirmed as cleanup candidates;
+identify ownership and purpose before proposing any lifecycle action.
 
 
 ## Retired workloads

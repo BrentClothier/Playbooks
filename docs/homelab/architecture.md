@@ -12,15 +12,32 @@ The HomeLab is optimized for:
 
 ## Compute layer
 
-The virtualization layer is a three-node Proxmox environment:
+The virtualization layer is a three-node Proxmox environment with deliberately
+different hardware roles:
 
-- `proxmox1`
-- `proxmox2`
-- `proxmox3`
+- `proxmox1` - a small adjacent node providing general capacity;
+- `proxmox2` - the bottom 3U Core i5 chassis hosting primary application,
+  control, and storage workloads;
+- `proxmox3` - the retained small-form-factor gaming system, which also hosts
+  selected application, automation, and workstation workloads.
 
 The environment is not currently dependent on shared storage for cluster-style workload mobility. Workloads are generally placed intentionally on specific nodes.
 
-A separate gaming/workstation system is outside the managed Proxmox cluster.
+High allocated RAM on `proxmox3` is not, by itself, evidence of memory pressure.
+Its fixed allocation is intentional for gaming/workstation use; evaluate live
+pressure and application health before proposing memory changes.
+
+## Provisional consolidation direction
+
+The current planning direction is to consolidate the storage and service roles
+of `proxmox1` and `proxmox2` onto a bare-metal TrueNAS system, using native
+Docker/custom Compose where appropriate, while retaining `proxmox3` for gaming
+and selected workloads.
+
+This is a provisional architecture direction, not an approved purchase or
+migration. Workload placement, storage capacity, backup design, hardware
+compatibility, and rollback/restore procedures must be validated before an
+implementation plan is approved.
 
 ## Container layer
 

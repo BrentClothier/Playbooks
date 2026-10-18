@@ -1,16 +1,17 @@
 version: 1
-reviewed: 2026-09-29
+reviewed: 2026-10-17
 public_safe: true
 
 virtualization:
   platform: proxmox
   nodes:
     - name: proxmox1
-      role: general-capacity
+      role: small-node-general-capacity
     - name: proxmox2
-      role: primary-app-and-control-hosting
+      role: 3u-core-i5-primary-app-control-and-storage-hosting
     - name: proxmox3
-      role: app-automation-and-workstation-hosting
+      role: retained-sff-gaming-app-automation-and-workstation-hosting
+      allocation_note: fixed-ram-is-intentional-for-gaming-workstation-use
 
 control_plane:
   mcp:
@@ -48,6 +49,16 @@ important_guests:
     platform: lxc
     node: proxmox3
     purpose: object-storage
+  - name: Home-Assistant
+    platform: qemu
+    node: proxmox2
+    purpose: home-automation
+    lifecycle: intentionally-stopped-pending-later-rebuild
+  - name: ha-vm01
+    platform: qemu
+    node: proxmox2
+    purpose: home-automation
+    lifecycle: intentionally-stopped-pending-later-rebuild
 
 portainer:
   git_backed_stacks:
@@ -88,3 +99,13 @@ transition:
       - reproducible-infrastructure
       - independent-backup-for-authoritative-data
   chatgpt_role: assist-and-accelerate-transition
+  consolidation_plan:
+    status: provisional-not-approved
+    direction: move-proxmox1-and-proxmox2-storage-and-services-to-bare-metal-truenas
+    container_target: native-docker-and-custom-compose-where-appropriate
+    retained_system: proxmox3-gaming-and-selected-workloads
+    prerequisites:
+      - measure-current-data-growth-and-snapshot-requirements
+      - validate-independent-backup-and-restore-plan
+      - validate-workload-placement-and-rollback
+      - validate-memory-ecc-mode-end-to-end
