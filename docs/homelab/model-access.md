@@ -65,3 +65,24 @@ than assuming a new chat will refresh the action schema.
 
 This refresh requirement is a ChatGPT app-registration concern, not a reason to
 redeploy the HomeLab MCP again when the live server already exposes the tools.
+
+## Connection, plugin, and skill maintenance
+
+The Test App plugin reuses the existing TestApp connection and includes a bundled
+Test Operations skill. The original app-backed integration and standalone skill
+remain separate; the bundle is a snapshot, not a live reference to the standalone
+skill. Update both guidance copies deliberately when the same operating rules
+should apply, and verify their saved contents rather than assuming synchronization.
+
+Keep these maintenance layers distinct:
+
+- KB text changes update operating context without rebuilding the MCP image.
+- Skill/package changes update model guidance, not the backend or its approved actions.
+- MCP tool/schema changes need server deployment plus the action refresh above.
+
+Preserve the existing connection, plugin identity, and audience during guidance
+updates. Do not create a new connection, broaden credentials, or remove the
+original integration to refresh a skill. Private plugin visibility does not mean
+personal-account isolation; workspace administration still applies. Keep workspace,
+plugin, connection and tunnel identifiers, secrets, and private network details
+out of this public KB.

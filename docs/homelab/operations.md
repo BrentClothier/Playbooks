@@ -81,3 +81,44 @@ both narrowly:
   contention, and workload intent;
 - transient telemetry and market prices belong in dated analysis, not durable
   inventory or policy.
+
+## RomM upgrade discipline
+
+For each upgrade, compare the actual running application and database versions
+with the declared Compose source and the target release notes. A floating
+`latest` tag is not a version record. The
+[RomM Compose definition](../../stacks/romm/docker-compose.mariadb-slow-start.yml)
+currently uses `rommapp/romm:latest` and `mariadb:latest`; a whole-stack image pull
+can therefore change both. Keep application and database upgrades separately
+reviewed and scoped. Prefer explicit tested versions or digests when an authorized
+source change is made; documentation work alone does not authorize changing them.
+
+Before a data-migrating upgrade, verify a recent consistent database backup,
+assets/configuration coverage, separately protected ROM source files, and a
+usable recovery plan. Follow the official
+[RomM backup and restore guide](https://docs.romm.app/latest/install/backup-and-restore/).
+A live copy of database files may be inconsistent; use a supported logical dump,
+consistent snapshot, or appropriately stopped workload. An application-image
+downgrade alone does not undo a database migration.
+
+Read the exact release's first-start guidance and inspect progress rather than
+restarting a slow migration. For the
+[5.4.0 release](https://github.com/rommapp/romm/releases/tag/5.4.0), allow roughly
+15–20 minutes for the initial migration and do not restart while it runs. This
+release also requires explicit origins for cross-origin browser clients using
+credentials, and explicit trust for a reverse proxy whose address falls outside
+loopback/private ranges. Apply those configuration reviews only when relevant to
+the deployment; do not broaden trust or change security settings automatically.
+
+### Dated upgrade outcome: October 19, 2026 (Pacific)
+
+The owner reported completing the RomM update and confirmed it works. A read-only
+Portainer check at 19:39 PDT (02:39 UTC October 20) found RomM running with image
+version `5.4.0`; its revision `68f71259f7c6de39fbeedff9cc9ac114c18ee250` matches the
+official release tag. MariaDB still reported `13.0.2`, the same version seen before
+the update, and passed its configured Docker health check. RomM itself had no
+Docker health check, so the owner's functional confirmation is distinct from the
+container-state verification. Recent backup success and restorability were not
+verified. This is a historical outcome, not current telemetry or a pending upgrade;
+re-query live state for future decisions. The assistant performed no deployment,
+restart, or configuration change during this review.

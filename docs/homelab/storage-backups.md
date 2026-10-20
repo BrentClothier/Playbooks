@@ -66,3 +66,13 @@ Future storage changes should continue to document:
 
 A configured or scheduled backup is not proof of protection. Record successful
 backup completion and periodically test restoration of representative data.
+
+## Workload-specific coverage
+
+The documented independent-backup gap for authoritative NFS data is not proof
+that every application database lacks a backup. Resolve each workload's actual
+storage and backup evidence separately, including database volumes, user-uploaded
+assets, configuration, and source files. For RomM, protect its ROM library
+separately from its database and assets; see the
+[upgrade discipline and dated verification notes](operations.md#romm-upgrade-discipline).
+Keep credentials and private host paths out of public backup records.
