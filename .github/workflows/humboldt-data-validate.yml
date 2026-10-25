@@ -1,6 +1,12 @@
 name: Validate Humboldt data platform
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "stacks/humboldt-data/**"
+      - ".github/workflows/humboldt-data-validate.yml"
   push:
     branches:
       - main
@@ -18,6 +24,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Validate ETL Python syntax
         run: python -m py_compile stacks/humboldt-data/etl/humboldt_etl/*.py
@@ -35,3 +43,14 @@ jobs:
 
       - name: Build Humboldt images
         run: docker compose -f stacks/humboldt-data/docker-compose.yml build db api etl
+
+      - name: Check database image version and extension files
+        run: |
+          docker run --rm --network none --entrypoint sh humboldt-postgres:17 -ec '
+            postgres --version | grep -E "^postgres .* 17[.]"
+            grep -Eq "^default_version = '\''3[.]5[.]" /usr/share/postgresql/17/extension/postgis.control
+            for extension in postgis vector pg_trgm pgcrypto; do
+              test -s "/usr/share/postgresql/17/extension/$extension.control"
+            done
+            dpkg-query -W postgresql-17 postgresql-17-postgis-3 postgresql-17-pgvector
+          '
