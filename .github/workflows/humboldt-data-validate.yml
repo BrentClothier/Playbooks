@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - "stacks/humboldt-data/**"
-      - "ansible/humboldt/**"
       - ".github/workflows/humboldt-data-validate.yml"
   workflow_dispatch:
 

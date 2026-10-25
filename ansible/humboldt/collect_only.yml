@@ -1,0 +1,117 @@
+---
+- name: Discover Humboldt data VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    humboldt_vm_name: "humboldt-data01.home"
+    humboldt_vm_host: "192.168.86.173"
+    humboldt_vm_user: "root"
+
+  tasks:
+    - name: Wait for Humboldt data VM SSH
+      ansible.builtin.wait_for:
+        host: "{{ humboldt_vm_host }}"
+        port: 22
+        delay: 0
+        timeout: 120
+
+    - name: Add Humboldt data VM to in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ humboldt_vm_name }}"
+        ansible_host: "{{ humboldt_vm_host }}"
+        ansible_user: "{{ humboldt_vm_user }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+        groups: humboldt_data
+
+# Collection only: use the deployed stack, image, schema, and local .env as-is.
+- name: Collect Humboldt public records with existing services
+  hosts: humboldt_data
+  become: true
+  gather_facts: false
+
+  vars:
+    humboldt_stack_dir: /opt/humboldt-data
+
+  tasks:
+    - name: Check deployed Compose and environment files exist
+      ansible.builtin.stat:
+        path: "{{ humboldt_stack_dir }}/{{ item }}"
+      loop:
+        - docker-compose.yml
+        - .env
+      register: humboldt_collection_files
+      no_log: true
+
+    - name: Require existing deployed configuration
+      ansible.builtin.assert:
+        that:
+          - item.stat.isreg | default(false)
+        fail_msg: "Collection requires the existing docker-compose.yml and .env."
+        quiet: true
+      loop: "{{ humboldt_collection_files.results }}"
+      no_log: true
+
+    - name: Require the existing local ETL image
+      ansible.builtin.command:
+        argv:
+          - docker
+          - image
+          - inspect
+          - humboldt-etl:latest
+      changed_when: false
+      no_log: true
+
+    - name: Check the deployed database is running
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f docker-compose.yml --env-file .env
+          ps --status running --quiet db
+        chdir: "{{ humboldt_stack_dir }}"
+      register: humboldt_collection_db
+      changed_when: false
+      no_log: true
+
+    - name: Require a running database before collection
+      ansible.builtin.assert:
+        that:
+          - humboldt_collection_db.stdout_lines | length == 1
+        fail_msg: "Collection requires the existing database to be running."
+        quiet: true
+
+    # --no-deps leaves database/API lifecycle alone; --pull never uses the local image.
+    # Do not add --build or the unsupported compose run flag --no-build.
+    - name: Run collection using the existing ETL image
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f docker-compose.yml --env-file .env --profile tools
+          run --rm --no-deps --pull never -T etl
+          sync-all --legistar-days-back 730 --document-limit 100
+        chdir: "{{ humboldt_stack_dir }}"
+      register: humboldt_collection
+      changed_when: true
+      no_log: true
+
+    # sync-all prints one JSON result and can exit zero for partial document failures.
+    - name: Parse the collection result without exposing raw ETL output
+      ansible.builtin.set_fact:
+        humboldt_collection_result: "{{ humboldt_collection.stdout | from_json }}"
+      no_log: true
+
+    - name: Require a complete document collection result
+      ansible.builtin.assert:
+        that:
+          - humboldt_collection_result is mapping
+          - humboldt_collection_result.documents is defined
+          - humboldt_collection_result.documents is mapping
+          - humboldt_collection_result.documents.failed is defined
+          - humboldt_collection_result.documents.failed | type_debug == 'int'
+          - humboldt_collection_result.documents.failed == 0
+        fail_msg: "Collection failed or returned an incomplete document result."
+        quiet: true
+      no_log: true
+
+    - name: Report successful collection
+      ansible.builtin.debug:
+        msg: "Collection completed with zero failed documents."
