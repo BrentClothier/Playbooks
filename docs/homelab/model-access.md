@@ -45,6 +45,10 @@ The KB is public-safe and is not a secret store. Models must not expect it to
 contain credentials or request that secret values be added for convenience.
 
 
+## Migration diagnostic tool coverage
+
+Newly proposed MCP actions that read Proxmox guest configurations, migration status, backup outcomes, redacted task logs, ZFS pool summaries, and storage content may appear only after the server revision is deployed and the workspace Action control is refreshed. Distinguish these API projections from actual ZFS dataset inventory, NFS export inspection, PBS restore evidence, and future TrueNAS API integration. When an action is unavailable in the current conversation, use available live APIs or ask for narrowly scoped read-only output; do not manufacture results.
+
 ## ChatGPT action refresh
 
 ChatGPT workspaces keep a frozen snapshot of an approved custom MCP app's
