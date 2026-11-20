@@ -99,6 +99,33 @@ MCP is intended for:
 
 It is not intended to expose unrestricted network configuration.
 
+### UniFi Protect sensor integration
+
+The HomeLab MCP also exposes two narrowly scoped read-only UniFi Protect
+sensor actions:
+
+- `unifi_protect_sensors` — current sensor inventory and selected contact,
+  motion, environmental, connectivity, and battery data (bounded output).
+- `unifi_protect_sensor` — selected live telemetry for one validated sensor ID.
+
+These use the official local Protect Integration API on the UniFi console.
+Runtime credentials (`UNIFI_PROTECT_URL`, `UNIFI_PROTECT_API_KEY`,
+`UNIFI_PROTECT_VERIFY_SSL`) are optional overrides; when they are absent,
+the deployed server reuses the existing UniFi Network URL, API key, and TLS
+verification settings. Protect permission must still be confirmed by a real
+sensor request, not inferred from Network API success.
+
+Both MCP actions allow GET requests only to Protect sensor endpoints. They
+do not expose camera footage, snapshots, audio, Protect configuration, alarm
+controls, or a generic API proxy. Avoid logging API keys and never record
+private sensor identifiers, locations, event histories, or personal room
+names in this public KB.
+
+A successful Protect sensor status query proves API connectivity and the
+reported sensor telemetry only. A smoke/CO listener appearing connected does
+not independently prove its alarm-detection or notification chain works.
+Verify alarm functionality through the vendor's supported testing procedure.
+
 ## Future TrueNAS integration
 
 There is no existing TrueNAS MCP integration. If the consolidation plan is
