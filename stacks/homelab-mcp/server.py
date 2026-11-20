@@ -1527,6 +1527,122 @@ async def proxmox_recent_tasks(node: str, limit: int = 25) -> Any:
 
 
 # -------------------------
+# Pre-TrueNAS Proxmox disk and cluster diagnostics (read-only)
+# -------------------------
+
+@mcp.tool
+async def proxmox_cluster_quorum() -> Any:
+    """Inspect Proxmox cluster membership and quorum before retiring nodes.
+
+    API status is a snapshot, not authorization to remove a node.
+    """
+    raw = await pve_get("/cluster/status")
+    if not isinstance(raw, list):
+        raise ValueError("Unexpected Proxmox cluster status response")
+    allowed = {"type", "name", "nodeid", "online", "quorate", "ip", "local"}
+    return {
+        "members": [
+            {k: entry[k] for k in allowed if k in entry}
+            for entry in raw[:100]
+            if isinstance(entry, dict)
+        ],
+        "truncated": len(raw) > 100,
+    }
+
+
+def _pve_safe_zfs_children(children: Any, depth: int = 0) -> list[dict[str, Any]]:
+    """Bound pool/vdev trees and return only operational ZFS status fields."""
+    if not isinstance(children, list) or depth >= 6:
+        return []
+    allowed = {"name", "state", "read", "write", "cksum", "msg"}
+    result = []
+    for entry in children[:64]:
+        if not isinstance(entry, dict):
+            continue
+        data = {k: entry[k] for k in allowed if k in entry}
+        if "children" in entry:
+            data["children"] = _pve_safe_zfs_children(entry["children"], depth + 1)
+        result.append(data)
+    return result
+
+
+@mcp.tool
+async def proxmox_zfs_pool_detail(node: str, pool: str) -> Any:
+    """Read pool/vdev state, error counters and last scrub/scan description.
+
+    This is Proxmox's read-only ZFS details API, not a recursive dataset
+    listing, snapshot inventory, backup or guarantee of disk health.
+    """
+    safe_node = _pve_safe_node(node)
+    safe_pool = _pve_safe_storage(pool)
+    raw = await pve_get(f"/nodes/{safe_node}/disks/zfs/{safe_pool}")
+    if not isinstance(raw, dict):
+        raise ValueError("Unexpected Proxmox ZFS pool details")
+    allowed = {"name", "state", "status", "action", "scan", "errors"}
+    return {
+        "node": safe_node,
+        "pool": safe_pool,
+        "detail": {
+            **{k: raw[k] for k in allowed if k in raw},
+            "children": _pve_safe_zfs_children(raw.get("children")),
+        },
+    }
+
+
+@mcp.tool
+async def proxmox_physical_disks(node: str, limit: int = 100) -> Any:
+    """List physical disks and selected identity/health/usage metadata.
+
+    Useful to distinguish data disks from the OS boot disk before disassembly.
+    Disk identity alone cannot prove membership in a ZFS pool: cross-check vdevs.
+    """
+    safe_node = _pve_safe_node(node)
+    safe_limit = max(1, min(int(limit), 100))
+    raw = await pve_get(f"/nodes/{safe_node}/disks/list")
+    if not isinstance(raw, list):
+        raise ValueError("Unexpected Proxmox disk inventory")
+    allowed = {
+        "devpath", "model", "serial", "size", "type", "health", "wearout",
+        "used", "gpt", "rpm", "vendor",
+    }
+    return {
+        "node": safe_node,
+        "disks": [
+            {k: entry[k] for k in allowed if k in entry}
+            for entry in raw[:safe_limit] if isinstance(entry, dict)
+        ],
+        "total_returned_by_api": len(raw),
+        "truncated": len(raw) > safe_limit,
+    }
+
+
+@mcp.tool
+async def proxmox_disk_smart_health(node: str, disk: str) -> Any:
+    """Read SMART health status for one local /dev disk.
+
+    This uses healthonly=1; it cannot substitute for complete SMART history
+    or a verified independent backup.
+    """
+    safe_node = _pve_safe_node(node)
+    if not isinstance(disk, str) or not re.fullmatch(
+        r"/dev/(?:sd[a-z]{1,3}|nvme[0-9]{1,3}n[0-9]{1,3})", disk
+    ):
+        raise ValueError("Disk must be a local /dev/sdX or /dev/nvmeXnY device")
+    raw = await pve_get(
+        f"/nodes/{safe_node}/disks/smart",
+        {"disk": disk, "healthonly": 1},
+    )
+    if not isinstance(raw, dict):
+        raise ValueError("Unexpected Proxmox SMART response")
+    allowed = {"health", "status", "passed", "model", "type"}
+    return {
+        "node": safe_node,
+        "disk": disk,
+        "health": {k: raw[k] for k in allowed if k in raw},
+    }
+
+
+# -------------------------
 # Read-only Proxmox migration and recovery diagnostics
 # -------------------------
 

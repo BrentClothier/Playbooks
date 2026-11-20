@@ -126,6 +126,21 @@ reported sensor telemetry only. A smoke/CO listener appearing connected does
 not independently prove its alarm-detection or notification chain works.
 Verify alarm functionality through the vendor's supported testing procedure.
 
+### Additional read-only Proxmox preflight diagnostics
+
+For hardware and ZFS migration, narrowly scoped read-only API actions
+`proxmox_cluster_quorum`, `proxmox_zfs_pool_detail`,
+`proxmox_physical_disks`, and `proxmox_disk_smart_health` are implemented
+in the MCP source. Availability requires deployment and a refreshed ChatGPT
+action snapshot. No export, import, wipe, reformat, SMART-test initiation,
+ZFS modification, node shutdown or cluster-member removal is exposed.
+
+Use these before changing hardware to check cluster quorum, disk identity,
+pool vdev state and scrub descriptions. They cannot replace LXC-rootfs
+permissions, NFS export inventory, ZFS dataset/snapshot listings, independent
+backups or verified restore testing. Keep private disk serials in a secured
+migration record, not this public repository.
+
 ## Future TrueNAS integration
 
 There is no existing TrueNAS MCP integration. If the consolidation plan is
