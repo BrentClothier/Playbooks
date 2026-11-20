@@ -28,6 +28,35 @@ This is an operating playbook, not authorization to execute changes. Query live 
 5. Validate databases, Plex libraries, RomM metadata and file paths. Reorganize into new datasets only after storage and backups permit safe migration.
 6. Retire PBS and Proxmox nodes only after independent restores and application cutover tests pass; plan Proxmox cluster quorum separately.
 
+## Read-only Proxmox disk and quorum preflight
+
+The pre-cutover MCP enhancement adds four narrowly scoped Proxmox API reads,
+subject to deploying the server version and refreshing approved ChatGPT actions:
+
+- `proxmox_zfs_pool_detail(node,pool)`: pool topology, vdev state and
+  read/write/checksum counters, last scrub/scan description and errors;
+- `proxmox_physical_disks(node)`: physical disk path, model, size, serial,
+  usage and reported health, for verifying data-drive identities;
+- `proxmox_disk_smart_health(node,disk)`: selected local disk SMART health,
+  with device-path validation and health-only response;
+- `proxmox_cluster_quorum()`: current cluster membership/quorate state
+  before retiring or disconnecting Proxmox nodes.
+
+Record disk serials and private identifiers only in a secured migration record,
+never in this public KB. Disk identity must be cross-checked against ZFS
+vdev membership and physical labels before unplugging drives. Device names
+such as `/dev/sdX` can change after reboot or replugging.
+
+These API projections **do not** expose native `zfs list` datasets and
+snapshots, LXC 105's `/data` ACLs/ownership, Ubuntu `/etc/exports`, or
+verified independent restore evidence. Those are required pre-cutover checks
+and must be collected by an appropriate local/approved read-only method,
+not inferred from successful API calls.
+
+For TrueNAS 25.04+ integrations use its versioned JSON-RPC WebSocket API,
+not a new REST-only MCP client. Discover the installed TrueNAS version
+and provision a least-privilege, user-linked key after installation.
+
 ## Diagnostic tool limits
 
 - `proxmox_guest_config`: selected VM/LXC boot, disk and network settings, excluding cloud-init passwords, SSH keys and descriptions.
