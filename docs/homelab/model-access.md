@@ -49,6 +49,25 @@ contain credentials or request that secret values be added for convenience.
 
 Newly proposed MCP actions that read Proxmox guest configurations, migration status, backup outcomes, redacted task logs, ZFS pool summaries, and storage content may appear only after the server revision is deployed and the workspace Action control is refreshed. Distinguish these API projections from actual ZFS dataset inventory, NFS export inspection, PBS restore evidence, and future TrueNAS API integration. When an action is unavailable in the current conversation, use available live APIs or ask for narrowly scoped read-only output; do not manufacture results.
 
+## UniFi Protect sensor tool availability
+
+Following the HomeLab MCP Protect integration deployment and workspace
+action refresh, `unifi_protect_sensors` and `unifi_protect_sensor` are
+available as read-only actions. The current server configuration can reuse the
+existing UniFi Network API key when dedicated Protect values are unset.
+Confirm availability and authorization with live MCP calls: the Network API
+working does not prove the Protect API grants sensor access.
+
+Protect list responses may include environmental measurements, motion,
+contact and battery information when supported by the sensor. Treat missing
+or null fields as unknown rather than healthy. In particular, smoke/CO listener
+battery and connectivity do not verify functioning fire or CO detection.
+
+Live sensor names, IDs, home locations and readings belong in live responses,
+not in this public KB. For later changes distinguish a deployed server
+implementation, the app's approved tool snapshot, and guidance in the
+independent bundled/standalone skills.
+
 ## ChatGPT action refresh
 
 ChatGPT workspaces keep a frozen snapshot of an approved custom MCP app's
