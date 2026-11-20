@@ -59,6 +59,7 @@ See [architecture.md](architecture.md), [automation.md](automation.md), and [ope
 - [automation.md](automation.md) - Semaphore, Portainer, MCP, and future Codex usage.
 - [storage-backups.md](storage-backups.md) - storage and backup intent.
 - [operations.md](operations.md) - operating rules, known issues, and cleanup candidates.
+- [truenas-migration.md](truenas-migration.md) - safe Proxmox-to-TrueNAS cutover gates, data and rollback checks.
 - [model-access.md](model-access.md) - how AI clients should discover and use the KB.
 - [projects/humboldt.md](projects/humboldt.md) - Humboldt data-platform project.
 - [decisions/](decisions/) - architectural decision records.
