@@ -39,6 +39,7 @@ HOMELAB_KB_DOCUMENTS: dict[str, str] = {
     "automation": "automation.md",
     "storage_backups": "storage-backups.md",
     "operations": "operations.md",
+    "truenas_migration": "truenas-migration.md",
     "model_access": "model-access.md",
     "humboldt": "projects/humboldt.md",
     "adr_control_plane": "decisions/0001-controlled-mcp-control-plane.md",
