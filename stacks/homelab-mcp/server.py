@@ -123,11 +123,13 @@ UNIFI_VERIFY_SSL = os.getenv("UNIFI_VERIFY_SSL", "true").lower() in {
 
 # UniFi Protect sensor read-only Integration API (separate from Network).
 # Credentials are runtime-only; use a dedicated least-privilege API key.
-UNIFI_PROTECT_URL = os.getenv("UNIFI_PROTECT_URL", "").rstrip("/")
-UNIFI_PROTECT_API_KEY = os.getenv("UNIFI_PROTECT_API_KEY", "")
-UNIFI_PROTECT_VERIFY_SSL = os.getenv("UNIFI_PROTECT_VERIFY_SSL", "true").lower() in {
-    "1", "true", "yes", "on",
-}
+# An editor-managed Portainer stack may not be refreshed from Git Compose.
+# Reuse the existing UniFi credentials unless separate Protect values are set.
+UNIFI_PROTECT_URL = (os.getenv("UNIFI_PROTECT_URL") or UNIFI_URL).rstrip("/")
+UNIFI_PROTECT_API_KEY = os.getenv("UNIFI_PROTECT_API_KEY") or UNIFI_API_KEY
+UNIFI_PROTECT_VERIFY_SSL = os.getenv(
+    "UNIFI_PROTECT_VERIFY_SSL", str(UNIFI_VERIFY_SSL)
+).lower() in {"1", "true", "yes", "on"}
 
 # UniFi CEF/syslog event collector
 UNIFI_SYSLOG_ENABLED = os.getenv("UNIFI_SYSLOG_ENABLED", "true").lower() in {
