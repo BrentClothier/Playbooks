@@ -1491,7 +1491,7 @@ def _pve_safe_upid(node: str, upid: str) -> str:
     """Task IDs are opaque; require matching node and safe hex-like UPID syntax."""
     candidate = str(upid or "")
     if len(candidate) > 260 or not re.fullmatch(
-        r"UPID:[A-Za-z0-9._-]+:(?:[A-Fa-f0-9]+:){4}[^:\s/]{1,64}:[^:\s/]{0,64}:[^:\s/]{0,64}:",
+        r"UPID:[A-Za-z0-9._-]+:(?:[A-Fa-f0-9]+:){3}[^:\s/]{1,64}:[^:\s/]{0,64}:[^:\s/]{1,128}:",
         candidate,
     ):
         raise ValueError("Invalid Proxmox task UPID")
