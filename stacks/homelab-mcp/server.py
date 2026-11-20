@@ -165,6 +165,7 @@ def _homelab_kb_resolve(document: str) -> tuple[str, str]:
     requested = str(document or "").strip()
     if requested in HOMELAB_KB_DOCUMENTS:
         return requested, HOMELAB_KB_DOCUMENTS[requested]
+
     for name, path in HOMELAB_KB_DOCUMENTS.items():
         if requested == path:
             return name, path
@@ -324,7 +325,8 @@ def semaphore_allowed_template_pairs() -> set[tuple[int, int]]:
     Otherwise use comma-separated project_id:template_id pairs, for example:
     1:2,1:3,1:4
     """
-    allowed: set[tuple[int, int]] = set()    raw = SEMAPHORE_ALLOWED_TEMPLATES_RAW.strip()
+    allowed: set[tuple[int, int]] = set()
+    raw = SEMAPHORE_ALLOWED_TEMPLATES_RAW.strip()
     if not raw or raw == "*":
         return allowed
 
@@ -483,6 +485,7 @@ def redact_portainer_env(env: Any) -> Any:
 def sanitize_portainer_payload(value: Any) -> Any:
     """
     Recursively sanitize JSON returned by Portainer.
+
     Environment-variable VALUES are always removed, regardless of their
     variable name. Other fields with credential-like names are also redacted.
     """
@@ -643,6 +646,7 @@ async def portainer_put(
 ) -> Any:
     """
     Make an authenticated state-changing PUT request to Portainer.
+
     Any JSON returned by Portainer is sanitized before leaving the MCP.
     """
     if not portainer_ready():
@@ -852,7 +856,8 @@ def _split_cef_fields(payload: str) -> tuple[list[str], str]:
     index = 0
 
     for index, char in enumerate(payload):
-        if escaped:            current.append(char)
+        if escaped:
+            current.append(char)
             escaped = False
             continue
         if char == "\\":
@@ -1012,6 +1017,7 @@ def _unifi_syslog_udp_loop() -> None:
             sock.bind(("0.0.0.0", UNIFI_SYSLOG_LISTEN_PORT))
             _unifi_syslog_state["listening"] = True
             _unifi_syslog_state["error"] = None
+
             while True:
                 data, address = sock.recvfrom(65535)
                 raw_message = data.decode("utf-8", errors="replace").strip()
@@ -1170,7 +1176,8 @@ def decode_docker_logs(data: bytes) -> str:
         chunks.append(data[start:end])
         offset = end
 
-    if chunks and offset == len(data):        return b"".join(chunks).decode("utf-8", errors="replace")
+    if chunks and offset == len(data):
+        return b"".join(chunks).decode("utf-8", errors="replace")
 
     return data.decode("utf-8", errors="replace")
 
@@ -1331,7 +1338,8 @@ async def homelab_mcp_info() -> dict[str, Any]:
                 or semaphore_allowed_template_pairs()
             )
             else "read-only"
-        ),        "integrations": integrations,
+        ),
+        "integrations": integrations,
         "proxmox_base_url": PVE_URL,
         "proxmox_ssl_verification": PVE_VERIFY_SSL,
         "semaphore_configured": semaphore_ready(),
@@ -1490,6 +1498,7 @@ async def proxmox_qemu_vms(node: str) -> Any:
 async def proxmox_lxc_containers(node: str) -> Any:
     """List LXC containers on a Proxmox node."""
     return await pve_get(f"/nodes/{node}/lxc")
+
 
 @mcp.tool
 async def proxmox_storage(node: str) -> Any:
@@ -1650,7 +1659,8 @@ async def proxmox_backup_status(node: str, limit: int = 30) -> Any:
         {key: task[key] for key in (
             "type", "id", "status", "exitstatus", "starttime", "endtime", "upid"
         ) if key in task}
-        for task in tasks if isinstance(task, dict) and task.get("type") == "vzdump"    ]
+        for task in tasks if isinstance(task, dict) and task.get("type") == "vzdump"
+    ]
     safe_jobs = [
         {k: job[k] for k in (
             "id", "enabled", "schedule", "storage", "mode", "exclude",
@@ -1809,7 +1819,8 @@ async def semaphore_task(project_id: int, task_id: int) -> Any:
 
 
 @mcp.tool
-async def semaphore_task_output(    project_id: int,
+async def semaphore_task_output(
+    project_id: int,
     task_id: int,
     max_entries: int = 200,
 ) -> Any:
@@ -1970,6 +1981,7 @@ async def semaphore_setup_humboldt_automation() -> Any:
         "existing_templates": present,
     }
 
+
 @mcp.tool
 async def semaphore_allowed_templates() -> Any:
     """
@@ -2127,7 +2139,8 @@ async def portainer_containers(
     """
     return await portainer_get(
         f"/endpoints/{environment_id}/docker/containers/json",
-        params={"all": "true" if include_stopped else "false"},    )
+        params={"all": "true" if include_stopped else "false"},
+    )
 
 
 @mcp.tool
@@ -2286,7 +2299,8 @@ async def portainer_restart_container(
     Restart a Docker container through Portainer.
 
     This is a state-changing operation. timeout_seconds is capped at 120.
-    """    safe_timeout = max(0, min(timeout_seconds, 120))
+    """
+    safe_timeout = max(0, min(timeout_seconds, 120))
     result = await portainer_post(
         f"/endpoints/{environment_id}/docker/containers/"
         f"{container_id}/restart",
@@ -2445,7 +2459,8 @@ async def portainer_delete_orphaned_stack(
     stack = await _portainer_get_private_json(f"/stacks/{stack_id}")
 
     if not isinstance(stack, dict):
-        raise RuntimeError(            f"Portainer stack {stack_id} did not return a JSON object."
+        raise RuntimeError(
+            f"Portainer stack {stack_id} did not return a JSON object."
         )
 
     stack_name = str(stack.get("Name") or "")
@@ -2604,6 +2619,7 @@ async def portainer_delete_orphaned_stack(
 
     if preflight_only:
         return preflight
+
     try:
         result = await portainer_delete(
             f"/stacks/{stack_id}",
@@ -2763,7 +2779,8 @@ async def portainer_redeploy_stack(
             or not deployment_history
             or deployment_history[-1].get("Status") != 4
         ):
-            raise RuntimeError(                "Portainer reports stack Error status without a matching "
+            raise RuntimeError(
+                "Portainer reports stack Error status without a matching "
                 "failed deployment record. Refusing to retry automatically."
             )
 
@@ -2963,7 +2980,8 @@ async def unifi_clients(site_id: str, limit: int = 200) -> Any:
     safe_limit = max(1, min(limit, 200))
     return await unifi_get(
         f"/v1/sites/{site_id}/clients",
-        params={"offset": 0, "limit": safe_limit},    )
+        params={"offset": 0, "limit": safe_limit},
+    )
 
 
 @mcp.tool
