@@ -19,6 +19,12 @@ MCP access is read-only. A dedicated API token is granted audit/visibility permi
 
 Provisioning and configuration changes should go through infrastructure-as-code and Semaphore whenever practical.
 
+### Migration diagnostic actions
+
+The MCP provides bounded read-only Proxmox API views for guest disk/configuration metadata (`proxmox_guest_config`), recent migration tasks (`proxmox_migration_status`), backup job definitions and task results (`proxmox_backup_status`), redacted task output (`proxmox_task_log`), Proxmox-visible ZFS pool summaries (`proxmox_zfs_pools`), and Proxmox-visible storage volume listings (`proxmox_storage_content`). These do not offer arbitrary commands, pool export/import, migration initiation, snapshots, or backup creation. They cannot replace `zpool status -v`, a recursive `zfs list`, guest filesystem inspection, or restore tests.
+
+Require node/guest/task path validation, finite result limits, selected config fields, and redacted log text. Confirm errors and the destination storage independently after any migration. For any new permissions, grant the minimum appropriate Proxmox Audit read access; do not broaden write privileges.
+
 ## Semaphore
 
 Semaphore is the preferred state-changing automation layer.

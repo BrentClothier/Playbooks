@@ -39,6 +39,7 @@ HOMELAB_KB_DOCUMENTS: dict[str, str] = {
     "automation": "automation.md",
     "storage_backups": "storage-backups.md",
     "operations": "operations.md",
+    "truenas_migration": "truenas-migration.md",
     "model_access": "model-access.md",
     "humboldt": "projects/humboldt.md",
     "adr_control_plane": "decisions/0001-controlled-mcp-control-plane.md",
@@ -1459,6 +1460,224 @@ async def proxmox_recent_tasks(node: str, limit: int = 25) -> Any:
     """
     safe_limit = max(1, min(limit, 100))
     return await pve_get(f"/nodes/{node}/tasks", params={"limit": safe_limit})
+
+
+# -------------------------
+# Read-only Proxmox migration and recovery diagnostics
+# -------------------------
+
+def _pve_safe_node(node: str) -> str:
+    """Limit caller-controlled path segments to safe Proxmox node names."""
+    candidate = str(node or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}", candidate):
+        raise ValueError("Invalid Proxmox node name")
+    return candidate
+
+
+def _pve_safe_vmid(vmid: int) -> int:
+    candidate = int(vmid)
+    if candidate < 100 or candidate > 999_999_999:
+        raise ValueError("Invalid Proxmox VM/LXC ID")
+    return candidate
+
+
+def _pve_safe_storage(storage: str) -> str:
+    candidate = str(storage or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", candidate):
+        raise ValueError("Invalid Proxmox storage ID")
+    return candidate
+
+
+def _pve_safe_upid(node: str, upid: str) -> str:
+    """Task IDs are opaque; require matching node and safe hex-like UPID syntax."""
+    candidate = str(upid or "")
+    if len(candidate) > 260 or not re.fullmatch(
+        r"UPID:[A-Za-z0-9._-]+:(?:[A-Fa-f0-9]+:){3}[^:\s/]{1,64}:[^:\s/]{0,64}:[^:\s/]{1,128}:",
+        candidate,
+    ):
+        raise ValueError("Invalid Proxmox task UPID")
+    if candidate.split(":", 2)[1] != node:
+        raise ValueError("Task UPID node does not match selected node")
+    return candidate
+
+
+def _pve_safe_guest_config(raw: Any) -> dict[str, Any]:
+    """Return selected infrastructure metadata, not cloud-init credentials."""
+    if not isinstance(raw, dict):
+        raise ValueError("Unexpected Proxmox guest configuration")
+    allow = {
+        "arch", "bios", "boot", "bootdisk", "cores", "cpu", "description",
+        "features", "hostname", "machine", "memory", "name", "nameserver",
+        "onboot", "ostype", "protection", "rootfs", "scsihw", "sockets",
+        "startup", "swap", "tags", "template", "unprivileged", "vmgenid",
+    }
+    result: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key in allow or re.fullmatch(
+            r"(?:ide|sata|scsi|virtio|net|mp|unused|efidisk|tpmstate)\d{1,2}",
+            key,
+        ):
+            # Avoid returning description: it is user-defined and may contain secrets.
+            if key != "description":
+                result[key] = value
+    return result
+
+
+@mcp.tool
+async def proxmox_guest_config(node: str, vmid: int, guest_type: str = "qemu") -> Any:
+    """
+    Read the disk/network/boot configuration of a Proxmox VM or LXC.
+    guest_type is 'qemu' or 'lxc'. Cloud-init secrets, SSH keys,
+    passwords and arbitrary user-defined descriptions are excluded.
+    This is configuration metadata, not a verified working backup.
+    """
+    safe_node = _pve_safe_node(node)
+    safe_id = _pve_safe_vmid(vmid)
+    if guest_type not in {"qemu", "lxc"}:
+        raise ValueError("guest_type must be 'qemu' or 'lxc'")
+    raw = await pve_get(f"/nodes/{safe_node}/{guest_type}/{safe_id}/config")
+    return {
+        "node": safe_node,
+        "vmid": safe_id,
+        "guest_type": guest_type,
+        "config": _pve_safe_guest_config(raw),
+    }
+
+
+@mcp.tool
+async def proxmox_migration_status(
+    node: str, vmid: int | None = None, limit: int = 50,
+) -> Any:
+    """
+    List recent Proxmox migration tasks and their observed status.
+    This does not imply that guests, disks, or applications have been
+    successfully migrated; verify destination storage and service health.
+    """
+    safe_node = _pve_safe_node(node)
+    safe_limit = max(1, min(int(limit), 100))
+    tasks = await pve_get(
+        f"/nodes/{safe_node}/tasks", {"limit": safe_limit},
+    )
+    if not isinstance(tasks, list):
+        raise ValueError("Unexpected Proxmox task response")
+    selected = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_type = str(task.get("type", "")).lower()
+        if task_type not in {"qmigrate", "vzmigrate", "qmremote"}:
+            continue
+        if vmid is not None and str(task.get("id", "")) != str(_pve_safe_vmid(vmid)):
+            continue
+        selected.append({
+            key: task[key] for key in (
+                "type", "id", "status", "exitstatus", "starttime", "endtime", "upid"
+            ) if key in task
+        })
+    return {"node": safe_node, "migrations": selected, "scanned": len(tasks)}
+
+
+@mcp.tool
+async def proxmox_backup_status(node: str, limit: int = 30) -> Any:
+    """
+    Return configured backup jobs plus recent vzdump task outcomes on a node.
+    Task success alone does not prove backup content, off-host protection,
+    or restore success. This does not query PBS datastore snapshots.
+    """
+    safe_node = _pve_safe_node(node)
+    safe_limit = max(1, min(int(limit), 100))
+    jobs = await pve_get("/cluster/backup")
+    tasks = await pve_get(
+        f"/nodes/{safe_node}/tasks",
+        {"limit": safe_limit, "typefilter": "vzdump"},
+    )
+    if not isinstance(tasks, list):
+        raise ValueError("Unexpected Proxmox backup task response")
+    sanitized = [
+        {key: task[key] for key in (
+            "type", "id", "status", "exitstatus", "starttime", "endtime", "upid"
+        ) if key in task}
+        for task in tasks if isinstance(task, dict) and task.get("type") == "vzdump"
+    ]
+    safe_jobs = [
+        {k: job[k] for k in (
+            "id", "enabled", "schedule", "storage", "mode", "exclude",
+            "all", "vmid", "next-run", "prune-backups"
+        ) if k in job}
+        for job in (jobs if isinstance(jobs, list) else [])
+        if isinstance(job, dict)
+    ]
+    return {"node": safe_node, "jobs": safe_jobs, "recent_backup_tasks": sanitized}
+
+
+@mcp.tool
+async def proxmox_task_log(node: str, upid: str, limit: int = 100) -> Any:
+    """
+    Read bounded, redacted Proxmox task log lines. Useful for migration
+    errors and backup warnings. Never return raw unbounded log output.
+    """
+    safe_node = _pve_safe_node(node)
+    safe_upid = _pve_safe_upid(safe_node, upid)
+    safe_limit = max(1, min(int(limit), 200))
+    from urllib.parse import quote
+    raw = await pve_get(
+        f"/nodes/{safe_node}/tasks/{quote(safe_upid, safe='')}/log",
+        {"start": 0, "limit": safe_limit},
+    )
+    if not isinstance(raw, list):
+        raise ValueError("Unexpected Proxmox task log response")
+    lines = []
+    for line in raw[:safe_limit]:
+        if isinstance(line, dict):
+            lines.append({
+                "n": line.get("n"),
+                "t": redact_log_secrets(str(line.get("t", "")))[:2048],
+            })
+    return {"node": safe_node, "upid": safe_upid, "lines": lines}
+
+
+@mcp.tool
+async def proxmox_zfs_pools(node: str) -> Any:
+    """
+    List ZFS pool summaries exposed by the Proxmox disk API.
+    This is not zpool status -v, and it does not include per-disk scrub errors.
+    """
+    safe_node = _pve_safe_node(node)
+    return {"node": safe_node, "pools": await pve_get(f"/nodes/{safe_node}/disks/zfs")}
+
+
+@mcp.tool
+async def proxmox_storage_content(
+    node: str, storage: str, content: str | None = None, limit: int = 100,
+) -> Any:
+    """
+    List selected Proxmox storage content volumes with bounded results.
+    This is not a recursive native ZFS filesystem property/snapshot inventory;
+    Proxmox may expose only VM/LXC volumes for a ZFS storage ID.
+    """
+    safe_node = _pve_safe_node(node)
+    safe_storage = _pve_safe_storage(storage)
+    safe_limit = max(1, min(int(limit), 200))
+    if content is not None and content not in {"images", "rootdir", "backup", "iso"}:
+        raise ValueError("Unsupported storage content filter")
+    params = {"content": content} if content else None
+    raw = await pve_get(f"/nodes/{safe_node}/storage/{safe_storage}/content", params)
+    if not isinstance(raw, list):
+        raise ValueError("Unexpected Proxmox storage content response")
+    allowed_fields = {
+        "volid", "format", "size", "used", "content", "vmid", "ctime",
+        "subtype", "notes", "protected",
+    }
+    return {
+        "node": safe_node,
+        "storage": safe_storage,
+        "total_returned_by_api": len(raw),
+        "volumes": [
+            {k: v for k, v in entry.items() if k in allowed_fields}
+            for entry in raw[:safe_limit] if isinstance(entry, dict)
+        ],
+        "truncated": len(raw) > safe_limit,
+    }
 
 
 # -------------------------

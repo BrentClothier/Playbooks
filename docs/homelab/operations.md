@@ -82,6 +82,12 @@ both narrowly:
 - transient telemetry and market prices belong in dated analysis, not durable
   inventory or policy.
 
+## Proxmox-to-TrueNAS migration safety
+
+Use [truenas-migration.md](truenas-migration.md) for stage gates and known NFS data layout. Preserve the four-drive ZFS pool, make independent backups of high-value data, and do not mistake ZFS redundancy or snapshots for off-pool backup. The NFS data was hosted inside a Proxmox LXC root filesystem dataset, so import is not equivalent to exposing an identical NFS server. Check filesystem paths, UID/GID and ACL behavior, containers, NFS consumers and secrets separately. Avoid upgrading ZFS feature flags until rollback is ruled out.
+
+Check migrations with guest config, task status and task logs, destination disk volume ownership and service-level checks. Migration task acceptance, a moving lock, or a running VM alone does not establish success. Do not delete Proxmox source volumes or retire PBS without tested recovery.
+
 ## RomM upgrade discipline
 
 For each upgrade, compare the actual running application and database versions
