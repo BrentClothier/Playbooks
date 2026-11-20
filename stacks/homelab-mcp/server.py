@@ -121,6 +121,14 @@ UNIFI_VERIFY_SSL = os.getenv("UNIFI_VERIFY_SSL", "true").lower() in {
     "on",
 }
 
+# UniFi Protect sensor read-only Integration API (separate from Network).
+# Credentials are runtime-only; use a dedicated least-privilege API key.
+UNIFI_PROTECT_URL = os.getenv("UNIFI_PROTECT_URL", "").rstrip("/")
+UNIFI_PROTECT_API_KEY = os.getenv("UNIFI_PROTECT_API_KEY", "")
+UNIFI_PROTECT_VERIFY_SSL = os.getenv("UNIFI_PROTECT_VERIFY_SSL", "true").lower() in {
+    "1", "true", "yes", "on",
+}
+
 # UniFi CEF/syslog event collector
 UNIFI_SYSLOG_ENABLED = os.getenv("UNIFI_SYSLOG_ENABLED", "true").lower() in {
     "1",
@@ -778,6 +786,57 @@ async def unifi_get(
         return response.json()
 
 
+def unifi_protect_ready() -> bool:
+    return bool(UNIFI_PROTECT_URL and UNIFI_PROTECT_API_KEY)
+
+
+def unifi_protect_api_base_url() -> str:
+    """Use only the official Protect Integration API on the configured console."""
+    root = UNIFI_PROTECT_URL
+    if root.endswith("/proxy/protect/integration"):
+        return root
+    if root.endswith("/proxy/network/integration"):
+        root = root[: -len("/proxy/network/integration")]
+    return f"{root}/proxy/protect/integration"
+
+
+async def unifi_protect_get(path: str) -> Any:
+    """Read only a sensor endpoint, never an arbitrary Protect API path."""
+    if not unifi_protect_ready():
+        raise RuntimeError(
+            "UniFi Protect is not configured. Set UNIFI_PROTECT_URL and "
+            "UNIFI_PROTECT_API_KEY in the HomeLab MCP runtime environment."
+        )
+    if path != "/v1/sensors" and not re.fullmatch(
+        r"/v1/sensors/[A-Za-z0-9_-]{1,64}", path
+    ):
+        raise ValueError("Only read-only Protect sensor endpoints are permitted.")
+    async with httpx.AsyncClient(
+        base_url=unifi_protect_api_base_url(),
+        headers={
+            "X-API-Key": UNIFI_PROTECT_API_KEY,
+            "Accept": "application/json",
+        },
+        verify=UNIFI_PROTECT_VERIFY_SSL,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
+        response = await client.get(path)
+        response.raise_for_status()
+        return response.json()
+
+
+def _unifi_protect_sensor_summary(sensor: dict[str, Any]) -> dict[str, Any]:
+    """Allowlist status and environmental measurements, not full device configs."""
+    allowed = (
+        "id", "name", "modelKey", "state", "mountType",
+        "isOpened", "openStatusChangedAt", "isMotionDetected",
+        "motionDetectedAt", "leakDetectedAt", "externalLeakDetectedAt",
+        "tamperingDetectedAt", "batteryStatus", "wirelessConnectionState",
+        "stats",
+    )
+    return {key: sensor[key] for key in allowed if key in sensor}
+
+
 def _unescape_cef_value(value: str) -> str:
     return (
         value.replace(r"\n", "\n")
@@ -1265,6 +1324,8 @@ async def homelab_mcp_info() -> dict[str, Any]:
         integrations.append("portainer")
     if unifi_ready():
         integrations.append("unifi")
+    if unifi_protect_ready():
+        integrations.append("unifi-protect-sensors")
     if HUMBOLDT_API_URL:
         integrations.append("humboldt-public-records")
 
@@ -1294,6 +1355,7 @@ async def homelab_mcp_info() -> dict[str, Any]:
         "portainer_base_url": PORTAINER_URL if PORTAINER_URL else None,
         "portainer_ssl_verification": PORTAINER_VERIFY_SSL,
         "unifi_configured": unifi_ready(),
+        "unifi_protect_sensors_configured": unifi_protect_ready(),
         "unifi_base_url": unifi_api_base_url() if UNIFI_URL else None,
         "unifi_ssl_verification": UNIFI_VERIFY_SSL,
         "unifi_syslog_enabled": UNIFI_SYSLOG_ENABLED,
@@ -2801,6 +2863,47 @@ async def portainer_redeploy_stack(
         "git_metadata_preserved": True,
         "result": result,
     }
+
+
+# -------------------------
+# UniFi Protect sensor read-only tools
+# -------------------------
+
+@mcp.tool
+async def unifi_protect_sensors(limit: int = 100) -> Any:
+    """List Protect sensor environmental, contact, motion and battery status.
+
+    No cameras, media, audio, settings, or alarm controls are exposed.
+    """
+    safe_limit = max(1, min(limit, 100))
+    response = await unifi_protect_get("/v1/sensors")
+    sensors = response if isinstance(response, list) else (
+        response.get("data", []) if isinstance(response, dict) else []
+    )
+    if not isinstance(sensors, list):
+        raise ValueError("Unexpected Protect sensor response format.")
+    return {
+        "sensors": [
+            _unifi_protect_sensor_summary(sensor)
+            for sensor in sensors[:safe_limit]
+            if isinstance(sensor, dict)
+        ],
+        "returned": min(len(sensors), safe_limit),
+        "truncated": len(sensors) > safe_limit,
+    }
+
+
+@mcp.tool
+async def unifi_protect_sensor(sensor_id: str) -> Any:
+    """Read one Protect sensor's current status and measurements by ID."""
+    if not isinstance(sensor_id, str) or not re.fullmatch(
+        r"[A-Za-z0-9_-]{1,64}", sensor_id
+    ):
+        raise ValueError("Invalid Protect sensor ID.")
+    response = await unifi_protect_get(f"/v1/sensors/{sensor_id}")
+    if not isinstance(response, dict):
+        raise ValueError("Unexpected Protect sensor response format.")
+    return _unifi_protect_sensor_summary(response)
 
 
 # -------------------------
