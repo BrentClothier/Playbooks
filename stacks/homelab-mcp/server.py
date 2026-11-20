@@ -121,6 +121,14 @@ UNIFI_VERIFY_SSL = os.getenv("UNIFI_VERIFY_SSL", "true").lower() in {
     "on",
 }
 
+# UniFi Protect sensor read-only Integration API (separate from Network).
+# Credentials are runtime-only; use a dedicated least-privilege API key.
+UNIFI_PROTECT_URL = os.getenv("UNIFI_PROTECT_URL", "").rstrip("/")
+UNIFI_PROTECT_API_KEY = os.getenv("UNIFI_PROTECT_API_KEY", "")
+UNIFI_PROTECT_VERIFY_SSL = os.getenv("UNIFI_PROTECT_VERIFY_SSL", "true").lower() in {
+    "1", "true", "yes", "on",
+}
+
 # UniFi CEF/syslog event collector
 UNIFI_SYSLOG_ENABLED = os.getenv("UNIFI_SYSLOG_ENABLED", "true").lower() in {
     "1",
@@ -157,7 +165,6 @@ def _homelab_kb_resolve(document: str) -> tuple[str, str]:
     requested = str(document or "").strip()
     if requested in HOMELAB_KB_DOCUMENTS:
         return requested, HOMELAB_KB_DOCUMENTS[requested]
-
     for name, path in HOMELAB_KB_DOCUMENTS.items():
         if requested == path:
             return name, path
@@ -317,8 +324,7 @@ def semaphore_allowed_template_pairs() -> set[tuple[int, int]]:
     Otherwise use comma-separated project_id:template_id pairs, for example:
     1:2,1:3,1:4
     """
-    allowed: set[tuple[int, int]] = set()
-    raw = SEMAPHORE_ALLOWED_TEMPLATES_RAW.strip()
+    allowed: set[tuple[int, int]] = set()    raw = SEMAPHORE_ALLOWED_TEMPLATES_RAW.strip()
     if not raw or raw == "*":
         return allowed
 
@@ -477,7 +483,6 @@ def redact_portainer_env(env: Any) -> Any:
 def sanitize_portainer_payload(value: Any) -> Any:
     """
     Recursively sanitize JSON returned by Portainer.
-
     Environment-variable VALUES are always removed, regardless of their
     variable name. Other fields with credential-like names are also redacted.
     """
@@ -638,7 +643,6 @@ async def portainer_put(
 ) -> Any:
     """
     Make an authenticated state-changing PUT request to Portainer.
-
     Any JSON returned by Portainer is sanitized before leaving the MCP.
     """
     if not portainer_ready():
@@ -778,6 +782,57 @@ async def unifi_get(
         return response.json()
 
 
+def unifi_protect_ready() -> bool:
+    return bool(UNIFI_PROTECT_URL and UNIFI_PROTECT_API_KEY)
+
+
+def unifi_protect_api_base_url() -> str:
+    """Use only the official Protect Integration API on the configured console."""
+    root = UNIFI_PROTECT_URL
+    if root.endswith("/proxy/protect/integration"):
+        return root
+    if root.endswith("/proxy/network/integration"):
+        root = root[: -len("/proxy/network/integration")]
+    return f"{root}/proxy/protect/integration"
+
+
+async def unifi_protect_get(path: str) -> Any:
+    """Read only a sensor endpoint, never an arbitrary Protect API path."""
+    if not unifi_protect_ready():
+        raise RuntimeError(
+            "UniFi Protect is not configured. Set UNIFI_PROTECT_URL and "
+            "UNIFI_PROTECT_API_KEY in the HomeLab MCP runtime environment."
+        )
+    if path != "/v1/sensors" and not re.fullmatch(
+        r"/v1/sensors/[A-Za-z0-9_-]{1,64}", path
+    ):
+        raise ValueError("Only read-only Protect sensor endpoints are permitted.")
+    async with httpx.AsyncClient(
+        base_url=unifi_protect_api_base_url(),
+        headers={
+            "X-API-Key": UNIFI_PROTECT_API_KEY,
+            "Accept": "application/json",
+        },
+        verify=UNIFI_PROTECT_VERIFY_SSL,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
+        response = await client.get(path)
+        response.raise_for_status()
+        return response.json()
+
+
+def _unifi_protect_sensor_summary(sensor: dict[str, Any]) -> dict[str, Any]:
+    """Allowlist status and environmental measurements, not full device configs."""
+    allowed = (
+        "id", "name", "modelKey", "state", "mountType",
+        "isOpened", "openStatusChangedAt", "isMotionDetected",
+        "motionDetectedAt", "leakDetectedAt", "externalLeakDetectedAt",
+        "tamperingDetectedAt", "batteryStatus", "wirelessConnectionState",
+        "stats",
+    )
+    return {key: sensor[key] for key in allowed if key in sensor}
+
+
 def _unescape_cef_value(value: str) -> str:
     return (
         value.replace(r"\n", "\n")
@@ -797,8 +852,7 @@ def _split_cef_fields(payload: str) -> tuple[list[str], str]:
     index = 0
 
     for index, char in enumerate(payload):
-        if escaped:
-            current.append(char)
+        if escaped:            current.append(char)
             escaped = False
             continue
         if char == "\\":
@@ -958,7 +1012,6 @@ def _unifi_syslog_udp_loop() -> None:
             sock.bind(("0.0.0.0", UNIFI_SYSLOG_LISTEN_PORT))
             _unifi_syslog_state["listening"] = True
             _unifi_syslog_state["error"] = None
-
             while True:
                 data, address = sock.recvfrom(65535)
                 raw_message = data.decode("utf-8", errors="replace").strip()
@@ -1117,8 +1170,7 @@ def decode_docker_logs(data: bytes) -> str:
         chunks.append(data[start:end])
         offset = end
 
-    if chunks and offset == len(data):
-        return b"".join(chunks).decode("utf-8", errors="replace")
+    if chunks and offset == len(data):        return b"".join(chunks).decode("utf-8", errors="replace")
 
     return data.decode("utf-8", errors="replace")
 
@@ -1265,6 +1317,8 @@ async def homelab_mcp_info() -> dict[str, Any]:
         integrations.append("portainer")
     if unifi_ready():
         integrations.append("unifi")
+    if unifi_protect_ready():
+        integrations.append("unifi-protect-sensors")
     if HUMBOLDT_API_URL:
         integrations.append("humboldt-public-records")
 
@@ -1277,8 +1331,7 @@ async def homelab_mcp_info() -> dict[str, Any]:
                 or semaphore_allowed_template_pairs()
             )
             else "read-only"
-        ),
-        "integrations": integrations,
+        ),        "integrations": integrations,
         "proxmox_base_url": PVE_URL,
         "proxmox_ssl_verification": PVE_VERIFY_SSL,
         "semaphore_configured": semaphore_ready(),
@@ -1294,6 +1347,7 @@ async def homelab_mcp_info() -> dict[str, Any]:
         "portainer_base_url": PORTAINER_URL if PORTAINER_URL else None,
         "portainer_ssl_verification": PORTAINER_VERIFY_SSL,
         "unifi_configured": unifi_ready(),
+        "unifi_protect_sensors_configured": unifi_protect_ready(),
         "unifi_base_url": unifi_api_base_url() if UNIFI_URL else None,
         "unifi_ssl_verification": UNIFI_VERIFY_SSL,
         "unifi_syslog_enabled": UNIFI_SYSLOG_ENABLED,
@@ -1436,7 +1490,6 @@ async def proxmox_qemu_vms(node: str) -> Any:
 async def proxmox_lxc_containers(node: str) -> Any:
     """List LXC containers on a Proxmox node."""
     return await pve_get(f"/nodes/{node}/lxc")
-
 
 @mcp.tool
 async def proxmox_storage(node: str) -> Any:
@@ -1597,8 +1650,7 @@ async def proxmox_backup_status(node: str, limit: int = 30) -> Any:
         {key: task[key] for key in (
             "type", "id", "status", "exitstatus", "starttime", "endtime", "upid"
         ) if key in task}
-        for task in tasks if isinstance(task, dict) and task.get("type") == "vzdump"
-    ]
+        for task in tasks if isinstance(task, dict) and task.get("type") == "vzdump"    ]
     safe_jobs = [
         {k: job[k] for k in (
             "id", "enabled", "schedule", "storage", "mode", "exclude",
@@ -1757,8 +1809,7 @@ async def semaphore_task(project_id: int, task_id: int) -> Any:
 
 
 @mcp.tool
-async def semaphore_task_output(
-    project_id: int,
+async def semaphore_task_output(    project_id: int,
     task_id: int,
     max_entries: int = 200,
 ) -> Any:
@@ -1919,7 +1970,6 @@ async def semaphore_setup_humboldt_automation() -> Any:
         "existing_templates": present,
     }
 
-
 @mcp.tool
 async def semaphore_allowed_templates() -> Any:
     """
@@ -2077,8 +2127,7 @@ async def portainer_containers(
     """
     return await portainer_get(
         f"/endpoints/{environment_id}/docker/containers/json",
-        params={"all": "true" if include_stopped else "false"},
-    )
+        params={"all": "true" if include_stopped else "false"},    )
 
 
 @mcp.tool
@@ -2237,8 +2286,7 @@ async def portainer_restart_container(
     Restart a Docker container through Portainer.
 
     This is a state-changing operation. timeout_seconds is capped at 120.
-    """
-    safe_timeout = max(0, min(timeout_seconds, 120))
+    """    safe_timeout = max(0, min(timeout_seconds, 120))
     result = await portainer_post(
         f"/endpoints/{environment_id}/docker/containers/"
         f"{container_id}/restart",
@@ -2397,8 +2445,7 @@ async def portainer_delete_orphaned_stack(
     stack = await _portainer_get_private_json(f"/stacks/{stack_id}")
 
     if not isinstance(stack, dict):
-        raise RuntimeError(
-            f"Portainer stack {stack_id} did not return a JSON object."
+        raise RuntimeError(            f"Portainer stack {stack_id} did not return a JSON object."
         )
 
     stack_name = str(stack.get("Name") or "")
@@ -2557,7 +2604,6 @@ async def portainer_delete_orphaned_stack(
 
     if preflight_only:
         return preflight
-
     try:
         result = await portainer_delete(
             f"/stacks/{stack_id}",
@@ -2717,8 +2763,7 @@ async def portainer_redeploy_stack(
             or not deployment_history
             or deployment_history[-1].get("Status") != 4
         ):
-            raise RuntimeError(
-                "Portainer reports stack Error status without a matching "
+            raise RuntimeError(                "Portainer reports stack Error status without a matching "
                 "failed deployment record. Refusing to retry automatically."
             )
 
@@ -2804,6 +2849,47 @@ async def portainer_redeploy_stack(
 
 
 # -------------------------
+# UniFi Protect sensor read-only tools
+# -------------------------
+
+@mcp.tool
+async def unifi_protect_sensors(limit: int = 100) -> Any:
+    """List Protect sensor environmental, contact, motion and battery status.
+
+    No cameras, media, audio, settings, or alarm controls are exposed.
+    """
+    safe_limit = max(1, min(limit, 100))
+    response = await unifi_protect_get("/v1/sensors")
+    sensors = response if isinstance(response, list) else (
+        response.get("data", []) if isinstance(response, dict) else []
+    )
+    if not isinstance(sensors, list):
+        raise ValueError("Unexpected Protect sensor response format.")
+    return {
+        "sensors": [
+            _unifi_protect_sensor_summary(sensor)
+            for sensor in sensors[:safe_limit]
+            if isinstance(sensor, dict)
+        ],
+        "returned": min(len(sensors), safe_limit),
+        "truncated": len(sensors) > safe_limit,
+    }
+
+
+@mcp.tool
+async def unifi_protect_sensor(sensor_id: str) -> Any:
+    """Read one Protect sensor's current status and measurements by ID."""
+    if not isinstance(sensor_id, str) or not re.fullmatch(
+        r"[A-Za-z0-9_-]{1,64}", sensor_id
+    ):
+        raise ValueError("Invalid Protect sensor ID.")
+    response = await unifi_protect_get(f"/v1/sensors/{sensor_id}")
+    if not isinstance(response, dict):
+        raise ValueError("Unexpected Protect sensor response format.")
+    return _unifi_protect_sensor_summary(response)
+
+
+# -------------------------
 # UniFi Network read-only tools
 # -------------------------
 
@@ -2877,8 +2963,7 @@ async def unifi_clients(site_id: str, limit: int = 200) -> Any:
     safe_limit = max(1, min(limit, 200))
     return await unifi_get(
         f"/v1/sites/{site_id}/clients",
-        params={"offset": 0, "limit": safe_limit},
-    )
+        params={"offset": 0, "limit": safe_limit},    )
 
 
 @mcp.tool
