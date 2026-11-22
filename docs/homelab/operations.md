@@ -43,6 +43,13 @@ GitHub definitions -> Semaphore/Codex validation -> controlled deployment
 
 Manual Portainer stacks should gradually become Git-backed where appropriate. Secrets and mutable application data must stay outside the public repository.
 
+## Confirmed intentional service exceptions (November 21, 2026)
+
+- Mealie was deliberately turned off by the owner. A stopped Mealie guest,
+  container, or disconnected legacy Portainer endpoint is **not an unexpected
+  outage**. Do not restart it or recommend incident response without a later
+  instruction changing this intent. Recheck when explicitly requested.
+
 ## Current known issues / cleanup candidates
 
 - `homelab-mcp` remains editor-managed in Portainer. Its Compose source is still in Git, but restoring a clean Git-backed Portainer association is a future housekeeping task.
