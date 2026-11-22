@@ -32,6 +32,22 @@ Proxmox Backup Server currently provides VM/LXC backup capability, but the NFS s
 
 This is an acknowledged risk and should remain visible in planning. Storage redundancy protects against some device failures, but it is not a substitute for an independent backup.
 
+## Capacity-constrained cutover policy (owner confirmation, November 21, 2026)
+
+The owner confirms that no independent destination with enough capacity exists
+for a complete backup of the NFS dataset. Treat the full-backup gap as a known,
+explicitly accepted infrastructure limitation rather than repeatedly proposing
+an unavailable backup target. This is **not** evidence that the data is safe.
+
+For the pending TrueNAS migration, reduce risk without claiming redundancy or
+ZFS snapshots are independent backups: prioritize small irreplaceable files,
+consistent application database dumps, configuration/credential backups to a
+separate available device when feasible; record dataset and export settings;
+retain the original Proxmox boot/system configuration for recovery; and
+preserve the four-drive pool intact without feature upgrades during cutover.
+Moving the sole copy of the pool still carries nonzero risk even with these
+precautions. Do not erase, recreate or import the pool read-write on two hosts.
+
 ## Direction
 
 The target state is increasingly reproducible infrastructure managed through Git and IaC. Once the environment can be recreated reliably, Proxmox Backup Server is intended to be retired.
