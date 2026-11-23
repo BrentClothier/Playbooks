@@ -36,6 +36,32 @@ Current projects:
 
 MCP may run existing templates but does not accept arbitrary playbooks, shell commands, branches, tags, inventory overrides, or free-form arguments.
 
+### Replacement plan during TrueNAS consolidation (owner intent, November 22, 2026)
+
+The owner prefers a fresh, current Semaphore deployment over continuing the
+existing version-constrained installation built around a particular OpenTofu
+toolchain. Keep Semaphore as an option for approved repeatable tasks, especially
+Humboldt ETL; do not assume that a pre-existing OpenTofu version is required
+once the Proxmox VM workflow is retired. Verify tooling/runner versions before
+replacing any still-needed OpenTofu automation.
+
+Live inspection found three projects: `Clothier HomeLab`,
+`Clothier Homelab IaC`, and `Humboldt Government Intelligence`. The latter two
+had no task templates; legacy HomeLab tasks and Humboldt automation live in the
+first project. Existing template IDs, schedules, inventories, variable groups,
+credentials, SSH keys, and database history are not automatically reconstructed
+from the Git-tracked Ansible and OpenTofu source. Export needed project
+configuration and make a consistent backup of the Semaphore MySQL database
+and application encryption settings **privately** before a clean reinstall.
+Check new project/template IDs and refresh the MCP's authorized template scope
+and credentials after migration. Never publish exports or secrets to GitHub.
+
+Current installed container metadata identified upstream Semaphore 2.18.10
+despite a floating image tag at the observation time; no proof of the specific
+custom OpenTofu build is available from the metadata alone. Pin tested versions
+and preserve the old service until new task execution and connection tests pass.
+Do not have the HomeLab MCP redeploy itself.
+
 ### Template allowlist semantics
 
 The historical MCP setup intentionally used
