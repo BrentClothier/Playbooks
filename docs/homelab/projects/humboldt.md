@@ -139,6 +139,31 @@ embedding generation, and local inference can have materially different CPU,
 memory, accelerator, and storage-I/O requirements. Do not size future hardware
 from collector status alone.
 
+## TrueNAS app migration decision (owner intent, November 22, 2026)
+
+The `humboldt-data01` guest is not inherently needed long-term. The deployed
+PostgreSQL/PostGIS/pgvector database, read-only API and ETL worker are already
+defined under `stacks/humboldt-data/docker-compose.yml`; these can be adapted
+to TrueNAS-managed custom Compose and persistent datasets. Keep PostgreSQL
+private. The VM was observed stopped and the API unreachable during the
+pre-migration review, but that **does not** prove its data is expendable.
+
+Before removing the VM or repurposing its ZFS storage, preserve a consistent
+PostgreSQL dump and the local Docker database volume, application configuration
+and any object-storage references. Verify data counts, provenance, API
+endpoints and ETL results after restoration on TrueNAS. GitHub contains the
+playbooks, Compose source and OpenTofu definitions, **not** the live database,
+secrets, or the S3-backed OpenTofu state. Review the existing isolated MinIO
+state backend before any destroy/recreate operation.
+
+The existing Ansible playbooks and Compose networking refer directly to the
+old guest endpoint and provisioning mechanism. Adapt service addresses,
+publish bindings, source data locations and the HomeLab MCP Humboldt API URL
+before cutover; do not assume a Docker Compose launch alone completes migration.
+Use a fresh Semaphore environment for any retained scheduled ETL rather than
+the old VM-provisioning tasks, and remove legacy OpenTofu destroy/apply actions
+only after resources/state and dependencies have been reconciled.
+
 ## Next steps
 
 1. validate the first live Legistar and ArcGIS ingestion runs;
