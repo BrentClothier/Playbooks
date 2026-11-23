@@ -11,6 +11,32 @@ This is an operating playbook, not authorization to execute changes. Query live 
 - User-measured pre-migration data: TV shows ~1.6T, movies ~594G, audiobooks ~53G, apps ~188G (RomM ~187G, Family Archive ~224M), Stuff ~2.8G. These are approximations and do not prove where all application database volumes reside.
 - NFS data has no verified independent full backup. Prioritize irreplaceable files, consistent database backups, configuration/secrets (stored securely), and restore testing. A 1TB removable drive cannot cover the full dataset.
 
+## Application management end state
+
+- Retire Portainer **after** each application stack has been deployed through
+  TrueNAS Apps and validated. Retire NFS LXC 105 **after** its native TrueNAS
+  shares work with the required clients; temporary TrueNAS NFS sharing can
+  bridge the container-by-container migration.
+- Keep custom Compose YAML and non-secret catalog-app manifests in the
+  Playbooks GitHub repository. TrueNAS does not automatically redeploy an app
+  when its GitHub file changes: use a separately built, approved reconciliation
+  process. Pin important application and database image versions; validate
+  Compose configuration, persistent host paths, and port conflicts.
+- TrueNAS exposes catalog app inventory, installation, configuration, status,
+  updates, and lifecycle management through its versioned JSON-RPC WebSocket
+  API. These are **future HomeLab MCP capabilities**, not presently deployed.
+  Begin with read-only app inventory, available updates and job outcomes.
+  Make app install/update/start/stop narrowly scoped controlled writes, gated
+  on approved Git changes and preflight checks. No generic shell or full-admin
+  passthrough. Privileged delete, storage operations, and pool changes are
+  excluded by default.
+- Keep all secrets and mutable application data outside the public Git
+  repository. Application data must be backed up separately from deployment
+  definitions; ensure database consistency and an out-of-band recovery path.
+- Protect the HomeLab MCP and secure tunnel from self-redeployment; retain an
+  independent management path during the migration so a TrueNAS app outage
+  cannot eliminate recovery access.
+
 ## Gates before modifying Proxmox2 hardware
 
 1. Inventory live guests, source and destination volume IDs, container storage mounts, NFS clients, DNS/proxy dependencies, and rollbacks.
