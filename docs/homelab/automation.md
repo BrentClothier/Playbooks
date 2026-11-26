@@ -167,16 +167,57 @@ permissions, NFS export inventory, ZFS dataset/snapshot listings, independent
 backups or verified restore testing. Keep private disk serials in a secured
 migration record, not this public repository.
 
-## Future TrueNAS integration
+## TrueNAS integration
 
-The first TrueNAS MCP implementation exposes bounded read-only system, alert,
-disk, pool, dataset, snapshot, share, app, job, interface, VM and service queries.
-Deployment and action refresh must be verified separately. The backend uses
-JSON-RPC over verified TLS and a dedicated read-only account. Never expose
-raw API responses, app configs, job arguments or credential data. Do not expose a generic shell,
-unrestricted API proxy, broad storage administration, or implicit dataset/share
-deletion. State-changing actions require explicit scope, preflight validation,
-and separate approval appropriate to their risk.
+TrueNAS is the primary target platform for storage and applications. The first
+13 read-only actions were verified against the deployed TrueNAS 25.10.7 system
+on November 26, 2026. Stage-one diagnostics extend that backend with:
+
+- `truenas_disk_temperatures`: current disk readings, null means unknown;
+  this is not SMART attributes, endurance or a health certification.
+- `truenas_backup_status`: periodic snapshot, replication, cloud sync,
+  cloud backup and rsync task definitions, schedules and reported state.
+  An unavailable group is explicitly unknown; a configured task is not proof
+  of completion, independent retention or a tested restore.
+- `truenas_scrub_status`: schedules and reported pool scan state.
+- `truenas_performance`: bounded 1–24 hour reporting aggregates and latest
+  sample for approved system and inventoried-device metrics.
+- `truenas_importable_pools`: bounded read-only discovery scan; never imports
+  a pool. Use only on demand rather than each scheduled health check.
+- `truenas_system_updates`: update status and offered version; no download,
+  installation or restart.
+- `truenas_ups_status`: service state and supported reporting graphs when
+  the UPS service is running; unavailable telemetry is not healthy status.
+- `truenas_vm_status`: runtime state, not VM resource consumption.
+- `truenas_nfs_client_count`: reported connected client count, not proof
+  of functional mounts.
+
+Treat stage-one code, published image, deployed revision, refreshed ChatGPT
+action set and successful live calls as separate milestones. Verify actual
+availability before relying on any new tool. Full SMART/endurance, raw
+application logs, app statistics streaming, arbitrary filesystem ACL reads and
+free-text alert details are not included in this release; do not invent them
+or substitute shell access. Alert class and severity remain available through
+the existing alert metadata tool.
+
+Use fixed read RPCs over verified TLS WebSockets. Runtime username must match
+the API key owner. Prefer a dedicated least-privilege read account, not a full
+administrator key. No generic API proxy, shell, storage mutations, implicit
+imports or app lifecycle changes are authorized by these diagnostics.
+
+### Scheduled health watch
+
+Use the current KB and live API evidence to distinguish expected service
+availability from actual status. For automated two-hour checks, notify only
+on meaningful new or worsening exceptions, material monitoring failures, or
+resolved incidents. Consolidate nonurgent warnings, suppress duplicates and
+expected maintenance, and omit routine healthy reports. Prefer native
+immediate alerts for critical hardware faults; a scheduled model check is
+not a substitute. Keep scheduled checks strictly read-only. Do not claim that
+an empty list or missing telemetry establishes health. During migration do
+not alarm on deliberately offline services or disks until they are expected
+online. Never publish private device identifiers, credentials or live logs.
+
 
 ## Future Codex execution
 
