@@ -68,5 +68,68 @@ class TrueNASTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("hidden", json.dumps(dataset))
 
 
+
+    def test_backup_projection_drops_credentials_and_scripts(self):
+        result = tn._task_projection({"id": 3, "enabled": True, "source_datasets": ["tank/data"],
+            "credentials": {"secret": "secret-value"}, "password": "secret-value",
+            "pre_script": "secret-value", "schedule": {"hour": "3", "secret": "secret-value"},
+            "state": {"state": "FINISHED", "error": "secret-value"},
+            "job": {"id": 5, "state": "SUCCESS", "arguments": ["secret-value"],
+                    "progress": {"percent": 100, "description": "secret-value"}}})
+        self.assertNotIn("secret-value", json.dumps(result))
+        self.assertEqual(result["schedule"], {"hour": "3"})
+        self.assertEqual(result["job"]["progress"], {"percent": 100})
+
+    async def test_backup_group_failure_is_not_empty_inventory(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            read.side_effect = RuntimeError("credential value")
+            result = await tn._task_group("replication.query", 10, 0)
+            self.assertIsNone(result["items"])
+            self.assertNotIn("credential value", json.dumps(result))
+
+    async def test_reporting_metric_rejects_unknown_graph_and_traversal(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            for metric, identifier in [("bad", None), ("disk", "../secret"),
+                                       ("cpu", "sda")]:
+                with self.assertRaises(ValueError):
+                    await tn._reporting_metric(metric, identifier, 2)
+            read.assert_not_awaited()
+
+    async def test_reporting_bounds_and_numeric_projection(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            read.return_value = [{"name": "cpu", "identifier": None, "data": [
+                {"timestamp": 1, "usage": 2.5, "password": "secret-value"}],
+                "aggregations": {"mean": {"usage": 2.5, "nan": float("nan"),
+                "secret": "secret-value"}}}]
+            result = await tn._reporting_metric("cpu", None, 500)
+            self.assertEqual(result["hours_requested"], 24)
+            self.assertEqual(result["items"][0]["aggregations"]["mean"], {"usage": 2.5})
+            self.assertNotIn("secret-value", json.dumps(result))
+            self.assertEqual(read.call_args.args[1][1]["end"] - read.call_args.args[1][1]["start"], 86400)
+
+    async def test_temperatures_uses_inventoried_names(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            read.side_effect = [[{"name": "sda"}, {"name": "sdb"}, {"name": "../etc"}],
+                                {"sda": 32, "sdb": None, "secret": "secret-value"}]
+            result = await tn._temperatures()
+            self.assertEqual(result["items"], [{"name": "sda", "celsius": 32},
+                                               {"name": "sdb", "celsius": None}])
+            read.assert_awaited_with("disk.temperatures", [["sda", "sdb"], False])
+
+    def test_update_projection_omits_error_text_and_manifest(self):
+        result = tn._update_projection({"code": "NORMAL",
+            "status": {"current_version": {"train": "25.10", "profile": "STABLE"},
+                "new_version": {"version": "25.10.8", "manifest": {"secret": "secret-value"}}},
+            "error": {"errname": "TEST", "reason": "secret-value"}})
+        self.assertEqual(result["new_version"], {"version": "25.10.8"})
+        self.assertNotIn("secret-value", json.dumps(result))
+
+    async def test_new_mutating_methods_still_denied(self):
+        for method in ("pool.import_pool", "pool.scrub.run", "replication.run",
+                       "cloud_backup.sync", "update.download", "vm.start"):
+            with self.assertRaises(ValueError):
+                await tn._read(method, [])
+
+
 if __name__ == "__main__":
     unittest.main()
