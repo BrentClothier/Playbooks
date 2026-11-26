@@ -3248,6 +3248,11 @@ async def unifi_event_summary(hours: int = 24) -> Any:
     }
 
 
+# Register the optional read-only TrueNAS integration.
+from truenas_read import register as register_truenas
+register_truenas(mcp)
+
+
 if __name__ == "__main__":
     start_unifi_syslog_receiver()
     mcp.run(transport="http", host="0.0.0.0", port=8000)

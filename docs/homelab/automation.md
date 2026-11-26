@@ -169,9 +169,11 @@ migration record, not this public repository.
 
 ## Future TrueNAS integration
 
-There is no existing TrueNAS MCP integration. If the consolidation plan is
-approved and implemented, expose TrueNAS through purpose-built, narrow MCP
-operations with read-only discovery first. Do not expose a generic shell,
+The first TrueNAS MCP implementation exposes bounded read-only system, alert,
+disk, pool, dataset, snapshot, share, app, job, interface, VM and service queries.
+Deployment and action refresh must be verified separately. The backend uses
+JSON-RPC over verified TLS and a dedicated read-only account. Never expose
+raw API responses, app configs, job arguments or credential data. Do not expose a generic shell,
 unrestricted API proxy, broad storage administration, or implicit dataset/share
 deletion. State-changing actions require explicit scope, preflight validation,
 and separate approval appropriate to their risk.
