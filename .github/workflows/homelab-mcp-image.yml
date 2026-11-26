@@ -7,14 +7,37 @@ on:
     paths:
       - "stacks/homelab-mcp/**"
       - ".github/workflows/homelab-mcp-image.yml"
+  pull_request:
+    paths:
+      - "stacks/homelab-mcp/**"
+      - ".github/workflows/homelab-mcp-image.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install WebSocket test dependency
+        run: python -m pip install 'websockets>=15,<16'
+      - name: Test TrueNAS read-only client
+        working-directory: stacks/homelab-mcp
+        run: |
+          python -m py_compile server.py truenas_read.py
+          python -m unittest -v test_truenas_read
+
   build-and-push:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: test
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
 
     steps:
