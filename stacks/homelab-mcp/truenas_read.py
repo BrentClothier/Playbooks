@@ -1,6 +1,9 @@
 """Narrow read-only TrueNAS 25.10 JSON-RPC 2.0 integration."""
 import asyncio
 import json
+import math
+import re
+import time
 import os
 import ssl
 from urllib.parse import urlsplit, urlunsplit
@@ -49,6 +52,10 @@ _READ_METHODS = frozenset({
     "pool.dataset.query", "pool.snapshot.query", "sharing.nfs.query",
     "sharing.smb.query", "app.query", "core.get_jobs", "interface.query",
     "vm.query", "service.query",
+    "disk.temperatures", "pool.scrub.query", "pool.snapshottask.query",
+    "replication.query", "cloudsync.query", "cloud_backup.query",
+    "rsynctask.query", "reporting.get_data", "pool.import_find",
+    "update.status", "vm.status", "nfs.client_count",
 })
 
 
@@ -87,7 +94,26 @@ async def _read(method, params=None):
                 }])
                 if not isinstance(auth, dict) or auth.get("response_type") != "SUCCESS":
                     raise RuntimeError("TrueNAS API key authentication failed.")
-                return await _exchange(ws, 2, method, params or [])
+                result = await _exchange(ws, 2, method, params or [])
+                # Discovery starts a read-only scan job, not an import. Poll only
+                # the job we just initiated, on the same authenticated session.
+                if method == "pool.import_find":
+                    if type(result) is not int or result < 1:
+                        raise RuntimeError("Unexpected pool discovery job ID.")
+                    for request_id in range(3, 24):
+                        jobs = await _exchange(ws, request_id, "core.get_jobs",
+                            [[["id", "=", result]], {"limit": 1}])
+                        if isinstance(jobs, list) and jobs:
+                            job = jobs[0]
+                            if not isinstance(job, dict) or job.get("id") != result:
+                                raise RuntimeError("Unexpected pool discovery job.")
+                            if job.get("state") == "SUCCESS":
+                                return job.get("result")
+                            if job.get("state") in ("FAILED", "ABORTED"):
+                                raise RuntimeError("TrueNAS pool discovery did not complete successfully.")
+                        await asyncio.sleep(1)
+                    raise RuntimeError("TrueNAS pool discovery still pending; use the UI for longer scans.")
+                return result
     except (TimeoutError, OSError, WebSocketException, ValueError):
         raise RuntimeError(
             "TrueNAS connection or response failed; check internal DNS, TLS, WebSockets and API availability."
@@ -196,6 +222,126 @@ _APP_FIELDS = ("id", "name", "state", "version", "human_version", "upgrade_avail
                "image_updates_available", "custom_app")
 
 
+
+# Stage 1 diagnostic projections. Never return raw task objects, credentials,
+# script fields, arbitrary logs, or opaque nested configuration.
+_SCHEDULE = ("minute", "hour", "dom", "month", "dow", "begin", "end")
+_TASK_FIELDS = ("id", "enabled", "dataset", "recursive", "lifetime_value",
+                "lifetime_unit", "source_datasets", "target_dataset", "direction",
+                "transport", "auto", "locked", "path", "keep_last",
+                "pool", "pool_name", "threshold")
+_JOB_FIELDS = ("id", "state", "time_started", "time_finished", "datetime",
+               "last_run", "last_success", "last_snapshot")
+
+
+def _task_projection(row):
+    out = _fields(row, _TASK_FIELDS)
+    for key in ("schedule", "restrict_schedule"):
+        if isinstance(row.get(key), dict):
+            out[key] = _fields(row[key], _SCHEDULE)
+    for key in ("state", "job"):
+        value = row.get(key)
+        if isinstance(value, dict):
+            out[key] = _fields(value, _JOB_FIELDS)
+            if isinstance(value.get("progress"), dict):
+                out[key]["progress"] = _fields(value["progress"], ("percent",))
+        elif isinstance(value, str) or value is None:
+            out[key] = _safe_value(value)
+    return out
+
+
+async def _task_group(method, limit, offset):
+    try:
+        return await _query(method, (), limit, offset, transform=_task_projection)
+    except (RuntimeError, ValueError):
+        return {"error": "Query unavailable; check role, API version and connectivity.",
+                "items": None}
+
+
+def _numeric_map(row):
+    if not isinstance(row, dict):
+        return {}
+    return {str(k)[:80]: v for k, v in list(row.items())[:64]
+            if v is None or (type(v) in (int, float) and math.isfinite(v))}
+
+
+_SYSTEM_GRAPHS = ("cpu", "cputemp", "load", "memory", "arcsize", "arcrate",
+                  "arcactualrate", "processes", "uptime")
+_DEVICE_GRAPHS = ("disk", "interface", "disktemp")
+_UPS_GRAPHS = ("upscharge", "upsruntime", "upsload", "upsvoltage",
+               "upscurrent", "upsfrequency", "upstemperature")
+
+
+async def _metric_graphs(graphs, hours):
+    end = int(time.time())
+    hours = max(1, min(int(hours), 24))
+    rows = await _read("reporting.get_data", [graphs,
+        {"start": end - hours * 3600, "end": end, "aggregate": True}])
+    if not isinstance(rows, list):
+        raise RuntimeError("Unexpected TrueNAS reporting result.")
+    items = []
+    for row in rows[:len(graphs)]:
+        out = _fields(row, ("name", "identifier", "start", "end", "legend"))
+        agg = row.get("aggregations")
+        if isinstance(agg, dict):
+            out["aggregations"] = {key: _numeric_map(agg.get(key))
+                                   for key in ("min", "mean", "max")}
+        data = row.get("data")
+        if isinstance(data, list):
+            out["sample_count"] = len(data)
+            out["latest_sample"] = _numeric_map(data[-1]) if data else None
+        items.append(out)
+    return {"hours_requested": hours, "items": items,
+            "coverage": "Reported min/mean/max and latest returned sample; empty or null is unknown."}
+
+
+async def _reporting_metric(metric, identifier, hours):
+    if metric in _SYSTEM_GRAPHS:
+        if identifier is not None:
+            raise ValueError("System-wide metrics do not accept an identifier.")
+    elif metric in _DEVICE_GRAPHS:
+        if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", identifier):
+            raise ValueError("A valid device identifier is required.")
+        method = "interface.query" if metric == "interface" else "disk.query"
+        rows = await _read(method, [[], {"limit": 200}])
+        if not isinstance(rows, list) or not any(isinstance(r, dict) and identifier in
+            (r.get("name"), r.get("devname"), r.get("id")) for r in rows):
+            raise ValueError("Identifier is not in the live device inventory.")
+    else:
+        raise ValueError("Unsupported reporting metric.")
+    return await _metric_graphs([{"name": metric, "identifier": identifier}], hours)
+
+
+def _update_projection(row):
+    out = _fields(row, ("code",))
+    status = row.get("status")
+    if isinstance(status, dict):
+        current = status.get("current_version")
+        new = status.get("new_version")
+        out["current_version"] = _fields(current, ("train", "profile", "matches_profile")) if isinstance(current, dict) else None
+        out["new_version"] = _fields(new, ("version",)) if isinstance(new, dict) else None
+    if isinstance(row.get("error"), dict):
+        out["error"] = _fields(row["error"], ("errname",))
+    if isinstance(row.get("update_download_progress"), dict):
+        out["update_download_progress"] = _fields(row["update_download_progress"], ("percent",))
+    return out
+
+
+async def _temperatures():
+    rows = await _read("disk.query", [[], {"limit": 200}])
+    if not isinstance(rows, list):
+        raise RuntimeError("Unexpected disk inventory.")
+    names = list(dict.fromkeys(row["name"] for row in rows if isinstance(row, dict)
+        and isinstance(row.get("name"), str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", row["name"])))
+    temps = await _read("disk.temperatures", [names, False]) if names else {}
+    if not isinstance(temps, dict):
+        raise RuntimeError("Unexpected disk temperature result.")
+    return {"items": [{"name": name, "celsius": _numeric_map(temps).get(name)
+                       if type(temps.get(name)) in (int, float) else None}
+                      for name in names], "coverage": "Current reported temperatures only; null is unknown."}
+
+
+
 def register(mcp):
     @mcp.tool
     async def truenas_system_info():
@@ -292,3 +438,69 @@ def register(mcp):
     async def truenas_services(limit: int = 100, offset: int = 0):
         """Read TrueNAS service status and boot-enable flags."""
         return await _query("service.query", ("id", "service", "state", "enable"), limit, offset)
+
+    @mcp.tool
+    async def truenas_disk_temperatures():
+        """Read current reported drive temperatures in Celsius; no SMART test or polling override."""
+        return await _temperatures()
+
+    @mcp.tool
+    async def truenas_backup_status(limit: int = 50, offset: int = 0):
+        """Read periodic snapshots, replication, cloud sync, cloud backup and rsync schedules and reported state. No raw credentials or scripts; not restore verification."""
+        groups = ("pool.snapshottask.query", "replication.query", "cloudsync.query",
+                  "cloud_backup.query", "rsynctask.query")
+        values = await asyncio.gather(*(_task_group(m, limit, offset) for m in groups))
+        return {"snapshot_tasks": values[0], "replication": values[1],
+                "cloud_sync": values[2], "cloud_backup": values[3], "rsync": values[4],
+                "coverage": "Configuration and reported task state, not independent backup or restore proof."}
+
+    @mcp.tool
+    async def truenas_scrub_status(limit: int = 50, offset: int = 0):
+        """Read configured scrub schedules and the imported pools' reported scan state. Does not start a scrub."""
+        schedules, pools = await asyncio.gather(
+            _task_group("pool.scrub.query", limit, offset),
+            _query("pool.query", (), limit, offset, transform=_pool))
+        return {"schedules": schedules, "pools": pools}
+
+    @mcp.tool
+    async def truenas_performance(metric: str = "cpu", identifier: str | None = None, hours: int = 2):
+        """Read bounded historical TrueNAS reporting aggregates: cpu, cputemp, load, memory, arcsize, arcrate, arcactualrate, processes, uptime; disk, disktemp or interface with an exact inventoried identifier. 1–24 hours."""
+        return await _reporting_metric(metric, identifier, hours)
+
+    @mcp.tool
+    async def truenas_importable_pools():
+        """Run a bounded read-only pool discovery scan. Does not import any pool. Use on demand, not continuous health polling."""
+        return _rows(await _read("pool.import_find"), ("name", "guid", "status", "hostname"), 50)
+
+    @mcp.tool
+    async def truenas_system_updates():
+        """Read OS update status and offered version. Does not download, install or reboot."""
+        return _update_projection(await _read("update.status"))
+
+    @mcp.tool
+    async def truenas_ups_status(hours: int = 2):
+        """Read recent UPS charge, runtime and load graphs when UPS telemetry is configured. No control actions."""
+        services = await _read("service.query", [[["service", "=", "ups"]], {"limit": 1}])
+        if not isinstance(services, list):
+            raise RuntimeError("Unexpected UPS service response.")
+        service = _fields(services[0], ("state", "enable")) if services else None
+        if not service or service.get("state") != "RUNNING":
+            return {"service": service, "coverage": "UPS service not reported running; telemetry not queried."}
+        result = await _metric_graphs([{"name": name, "identifier": None}
+                                      for name in ("upscharge", "upsruntime", "upsload")], hours)
+        return {"service": service, "reporting": result}
+
+    @mcp.tool
+    async def truenas_vm_status(vm_id: int):
+        """Read one VM's actual reported runtime state and PID, not memory or CPU usage."""
+        if type(vm_id) is not int or vm_id < 1:
+            raise ValueError("Positive VM ID required.")
+        return _fields(await _read("vm.status", [vm_id]), ("state", "pid", "domain_state"))
+
+    @mcp.tool
+    async def truenas_nfs_client_count():
+        """Read reported connected NFS client count; does not prove client mount correctness."""
+        result = await _read("nfs.client_count")
+        if type(result) is not int or result < 0:
+            raise RuntimeError("Unexpected NFS client count.")
+        return {"client_count": result}
