@@ -191,5 +191,100 @@ class TrueNASTests(unittest.IsolatedAsyncioTestCase):
                 await tn._read(method, [])
 
 
+
+class TrueNASAdminTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.env = patch.dict(os.environ, {
+            "TRUENAS_URL": "https://nas.example.test",
+            "TRUENAS_API_KEY": "read-test-key",
+            "TRUENAS_VERIFY_SSL": "true",
+            "TRUENAS_ADMIN_ENABLED": "true",
+            "TRUENAS_ADMIN_USERNAME": "admin-test",
+            "TRUENAS_ADMIN_API_KEY": "write-test-key",
+            "TRUENAS_ADMIN_DATASETS": "tank/appdata,tank/appdata/semaphore",
+            "TRUENAS_ADMIN_SNAPSHOT_DATASETS": "tank/appdata",
+            "TRUENAS_ADMIN_APPS": "plex,tailscale,homelab-mcp",
+        }, clear=True)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    async def test_disabled_and_same_key_fail_before_network(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            for env in ({"TRUENAS_ADMIN_ENABLED": "false"},
+                        {"TRUENAS_ADMIN_API_KEY": "read-test-key"},
+                        {"TRUENAS_ADMIN_USERNAME": ""}):
+                with patch.dict(os.environ, env):
+                    with self.assertRaises(ValueError):
+                        await tn._create_dataset("tank/appdata", "tank/appdata")
+            read.assert_not_awaited()
+
+    async def test_target_validation_and_confirmation(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            for name, confirmation in (("tank", "tank"), ("tank/../appdata", "tank/../appdata"),
+                                       ("tank/appdata/evil", "tank/appdata/evil"),
+                                       ("tank/appdata", "wrong")):
+                with self.assertRaises(ValueError):
+                    await tn._create_dataset(name, confirmation)
+            read.assert_not_awaited()
+
+    async def test_dataset_created_and_verified(self):
+        def row(name):
+            return {"id": name, "type": "FILESYSTEM", "mountpoint": "/mnt/" + name}
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read, \
+                patch.object(tn, "_admin_rpc", new_callable=AsyncMock) as write:
+            read.side_effect = [[], [row("tank")], [row("tank/appdata")]]
+            write.return_value = row("tank/appdata")
+            result = await tn._create_dataset("tank/appdata", "tank/appdata")
+            self.assertTrue(result["changed"])
+            write.assert_awaited_once_with("pool.dataset.create", [{
+                "name": "tank/appdata", "type": "FILESYSTEM", "create_ancestors": False}])
+
+    async def test_existing_dataset_not_modified(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read, \
+                patch.object(tn, "_admin_rpc", new_callable=AsyncMock) as write:
+            read.return_value = [{"id": "tank/appdata", "type": "FILESYSTEM",
+                                  "mountpoint": "/mnt/tank/appdata"}]
+            self.assertFalse((await tn._create_dataset("tank/appdata", "tank/appdata"))["changed"])
+            write.assert_not_awaited()
+
+    async def test_snapshot_nonrecursive_and_verified(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read, \
+                patch.object(tn, "_admin_rpc", new_callable=AsyncMock) as write:
+            ident = "tank/appdata@pre-test"
+            read.side_effect = [[{"id": "tank/appdata", "type": "FILESYSTEM",
+                                  "mountpoint": "/mnt/tank/appdata"}], [], [{"id": ident}]]
+            write.return_value = {"id": ident, "secret": "hidden"}
+            result = await tn._create_snapshot("tank/appdata", "pre-test", ident)
+            self.assertTrue(result["changed"])
+            self.assertNotIn("hidden", json.dumps(result))
+            write.assert_awaited_once_with("pool.snapshot.create", [{
+                "dataset": "tank/appdata", "name": "pre-test", "recursive": False}])
+
+    async def test_protected_apps_and_unknown_operations(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            for name, action in (("tailscale", "stop"), ("homelab-mcp", "stop"),
+                                 ("plex", "restart"), ("unknown", "start")):
+                with self.assertRaises(ValueError):
+                    await tn._set_app_state(name, action, action + ":" + name)
+            read.assert_not_awaited()
+
+    async def test_app_job_pending_not_verified(self):
+        with patch.object(tn, "_app_state", new_callable=AsyncMock) as state, \
+                patch.object(tn, "_admin_rpc", new_callable=AsyncMock) as write:
+            state.side_effect = ["STOPPED", "RUNNING"]
+            write.return_value = {"job_id": 5, "state": "PENDING_OR_UNKNOWN"}
+            result = await tn._set_app_state("plex", "start", "start:plex")
+            self.assertFalse(result["verified"])
+            write.assert_awaited_once_with("app.start", ["plex"])
+
+    async def test_arbitrary_write_rejected(self):
+        for method in ("pool.dataset.delete", "app.create", "core.bulk", "cronjob.run"):
+            with self.assertRaises(ValueError):
+                await tn._admin_rpc(method, [])
+        for method in tn._WRITE_METHODS:
+            with self.assertRaises(ValueError):
+                await tn._read(method, [])
+
+
 if __name__ == "__main__":
     unittest.main()
