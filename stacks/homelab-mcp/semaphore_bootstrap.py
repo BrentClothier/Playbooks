@@ -131,8 +131,67 @@ async def bootstrap(confirmation):
             return await _bootstrap(client)
 
 
+async def prepare_backups(confirmation):
+    from semaphore_policy import native_endpoint, parse, template_safe
+    if confirmation != "prepare:homelab-backup-templates":
+        raise ValueError("Exact backup template confirmation required.")
+    url = os.getenv("SEMAPHORE_URL", "").rstrip("/")
+    token = os.getenv("SEMAPHORE_API_TOKEN", "")
+    verify = os.getenv("SEMAPHORE_VERIFY_SSL", "true").lower() in {"true", "1", "yes", "on"}
+    if not token or not native_endpoint(url, verify):
+        raise ValueError("Expected native verified HTTPS endpoint.")
+    all_allowed, pairs, scoped = parse(os.getenv("SEMAPHORE_ALLOWED_TEMPLATES", ""))
+    if all_allowed or len(scoped) != 1:
+        raise ValueError("Expected one dedicated project scope, not a global wildcard.")
+    pid = next(iter(scoped))
+    prefix = f"/project/{pid}"
+    async with LOCK:
+        async with httpx.AsyncClient(base_url=url + "/api",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                verify=True, follow_redirects=False, trust_env=False, timeout=10) as client:
+            project = await _request(client, "GET", prefix + "/")
+            if not _matches(project, {"id": pid, "name": PROJECT}):
+                raise ValueError("Unexpected project.")
+            repo = _find(_rows(await _request(client, "GET", prefix + "/repositories")), "HomeLab Playbooks")
+            if not repo or not _matches(repo, {"project_id": pid, "git_url": REPO, "git_branch": "main", "monorepo": False}):
+                raise ValueError("Reviewed repository not found.")
+            key = _find(_rows(await _request(client, "GET", prefix + "/keys")), "Public Git - no credentials")
+            if not key or key.get("type") != "none" or _id(key) != repo.get("ssh_key_id") or key.get("source_storage_type"):
+                raise ValueError("Expected no-auth Git key.")
+            groups = _rows(await _request(client, "GET", prefix + "/environment"))
+            desired = []
+            for operation in ("verify", "restore"):
+                group = _find(groups, "TrueNAS Backup " + operation.capitalize())
+                if not group or group.get("project_id") != pid:
+                    raise ValueError("Owner must create both private backup variable groups first.")
+                desired.append((operation, _id(group)))
+            if desired[0][1] == desired[1][1]:
+                raise ValueError("Distinct variable groups required.")
+            results = {}
+            for operation, eid in desired:
+                fields = {"project_id": pid, "repository_id": _id(repo), "environment_ids": [eid],
+                          "playbook": "scripts/truenas/semaphore_backup.py", "app": "python",
+                          "arguments": "[]", "git_branch": "main"}
+                def compare(row):
+                    template_safe(row, pid, _id(row))
+                    return (_matches(row, fields) and not any(row.get(k) for k in
+                        ("inventory_id", "vaults", "runner_tag", "executor_image",
+                         "working_directory", "build_template_id")))
+                results[operation] = await _ensure(client, prefix + "/templates",
+                    {"name": "TrueNAS Backup " + operation.capitalize(), **fields,
+                     "autorun": False, "allow_override_args_in_task": False,
+                     "allow_override_branch_in_task": False, "task_params": {}}, compare)
+            return {"project_id": pid, "templates": results,
+                    "coverage": "Template metadata only; owner-provisioned keys and host restrictions not verified. No tasks started."}
+
+
 def register(mcp):
     @mcp.tool
     async def semaphore_bootstrap_truenas(confirmation: str):
         """Create only the fresh native HomeLab project, public Git repository, no-auth key, empty variable group and credential-free smoke template. Confirm bootstrap:homelab-truenas-operations. No task execution, host credentials or updates."""
         return await bootstrap(confirmation)
+
+    @mcp.tool
+    async def semaphore_prepare_backup_templates(confirmation: str):
+        """Create two fixed backup templates after owner installs restricted runner and private variable groups. Confirm prepare:homelab-backup-templates. No execution."""
+        return await prepare_backups(confirmation)
