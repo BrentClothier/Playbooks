@@ -131,5 +131,65 @@ class TrueNASTests(unittest.IsolatedAsyncioTestCase):
                 await tn._read(method, [])
 
 
+    def test_cron_projection_drops_sensitive_fields(self):
+        result = tn._cron_projection({"id": 4, "enabled": True, "command": "secret-value",
+            "description": "secret-value", "user": "secret-value",
+            "schedule": {"hour": "2", "secret": "secret-value"}})
+        self.assertEqual(result, {"id": 4, "enabled": True, "schedule": {"hour": "2"}})
+
+    async def test_dataset_root_stat_rejects_unverified_paths(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            for name in ("../etc", "/etc", "tank/../data", "tank/."):
+                with self.assertRaises(ValueError):
+                    await tn._dataset_root_stat(name)
+            read.assert_not_awaited()
+            read.return_value = [{"id": "tank/data", "type": "FILESYSTEM",
+                                  "mountpoint": "/etc"}]
+            with self.assertRaises(ValueError):
+                await tn._dataset_root_stat("tank/data")
+            self.assertEqual(read.await_count, 1)
+
+    async def test_dataset_root_stat_projection_and_mount_guard(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            dataset = {"id": "tank/data", "type": "FILESYSTEM", "mountpoint": "/mnt/tank/data"}
+            stat = {"realpath": "/mnt/tank/data", "type": "DIRECTORY",
+                    "is_mountpoint": True, "uid": 1000, "gid": 1000,
+                    "mode": 16877, "secret": "secret-value"}
+            read.side_effect = [ [dataset], stat, [dataset], dict(stat, is_mountpoint=False)]
+            result = await tn._dataset_root_stat("tank/data")
+            self.assertEqual(result["stat"]["uid"], 1000)
+            self.assertNotIn("secret-value", json.dumps(result))
+            with self.assertRaises(RuntimeError):
+                await tn._dataset_root_stat("tank/data")
+
+    async def test_app_containers_checks_inventory_and_omits_config(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            with self.assertRaises(ValueError):
+                await tn._app_containers("../app")
+            read.assert_not_awaited()
+            read.side_effect = [[{"id": "test-app"}], {"abc": {"id": "abc",
+                "service_name": "web", "image": "example:1", "state": "running",
+                "config": {"password": "secret-value"}}}, []]
+            result = await tn._app_containers("test-app")
+            self.assertEqual(result["items"][0]["state"], "running")
+            self.assertNotIn("secret-value", json.dumps(result))
+            with self.assertRaises(ValueError):
+                await tn._app_containers("missing")
+
+    def test_latest_sample_handles_array_and_dictionary(self):
+        self.assertEqual(tn._latest_sample([1, 2.5], ["time", "usage"]),
+                         {"time": 1, "usage": 2.5})
+        self.assertEqual(tn._latest_sample({"usage": 2.5, "secret": "hidden"}, None),
+                         {"usage": 2.5})
+        self.assertIsNone(tn._latest_sample([1, 2], ["time"]))
+        self.assertIsNone(tn._latest_sample([1, 2], ["time", "time"]))
+
+    async def test_stage2_write_methods_denied(self):
+        for method in ("cronjob.run", "cronjob.create", "filesystem.setacl",
+                       "filesystem.get_file", "app.start", "app.stop", "app.create"):
+            with self.assertRaises(ValueError):
+                await tn._read(method, [])
+
+
 if __name__ == "__main__":
     unittest.main()
