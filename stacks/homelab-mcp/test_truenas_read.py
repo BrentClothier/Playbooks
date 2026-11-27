@@ -338,5 +338,96 @@ class TrueNASDirectoryTests(unittest.IsolatedAsyncioTestCase):
             read.assert_awaited_once_with("filesystem.getacl", ["/mnt/tank/data", True, False])
 
 
+
+class TrueNASSessionTests(unittest.IsolatedAsyncioTestCase):
+    def make_socket(self):
+        ws = AsyncMock()
+        ws.state = tn.State.OPEN
+        return ws
+
+    async def test_reuse_and_serialization(self):
+        gate = tn._AuthGate()
+        session = tn._Session(gate)
+        ws = self.make_socket()
+        credentials = ("wss://nas.example.test/api/current", "reader", "key")
+        active = 0
+        ids = []
+
+        async def exchange(socket, request_id, method, params):
+            nonlocal active
+            self.assertIs(socket, ws)
+            self.assertEqual(active, 0)
+            active += 1
+            ids.append(request_id)
+            await asyncio.sleep(0)
+            active -= 1
+            return method
+
+        async def read():
+            async with session.use(credentials) as conn:
+                return await conn.call("system.info", [])
+
+        with patch.object(gate, "login", new_callable=AsyncMock) as login, \
+                patch.object(tn, "_exchange", side_effect=exchange):
+            login.return_value = ws
+            self.assertEqual(await asyncio.gather(*(read() for _ in range(25))),
+                             ["system.info"] * 25)
+            login.assert_awaited_once_with(credentials)
+            self.assertEqual(ids, list(range(2, 27)))
+        await session.close()
+
+    async def test_separate_sessions_and_credential_change(self):
+        gate = tn._AuthGate()
+        read, admin = tn._Session(gate), tn._Session(gate)
+        first, second, third = (self.make_socket() for _ in range(3))
+        creds = ("wss://nas.example.test/api/current", "user", "key")
+        admin_creds = (*creds[:2], "other-key")
+        new_creds = (*creds[:2], "new-key")
+        with patch.object(gate, "login", new_callable=AsyncMock) as login:
+            login.side_effect = [first, second, third]
+            async with read.use(creds):
+                self.assertIs(read.ws, first)
+            async with admin.use(admin_creds):
+                self.assertIs(admin.ws, second)
+            async with read.use(new_creds):
+                self.assertIs(read.ws, third)
+            first.close.assert_awaited_once()
+            second.close.assert_not_awaited()
+        await read.close()
+        await admin.close()
+
+    async def test_failed_rpc_not_replayed_and_socket_discarded(self):
+        gate = tn._AuthGate()
+        session = tn._Session(gate)
+        ws = self.make_socket()
+        credentials = ("wss://nas.example.test/api/current", "writer", "key")
+        with patch.object(gate, "login", new_callable=AsyncMock) as login, \
+                patch.object(tn, "_exchange", new_callable=AsyncMock) as exchange:
+            login.return_value = ws
+            exchange.side_effect = RuntimeError("ambiguous")
+            with self.assertRaises(RuntimeError):
+                async with session.use(credentials) as conn:
+                    await conn.call("pool.dataset.create", [])
+            exchange.assert_awaited_once()
+            self.assertIsNone(session.ws)
+            ws.close.assert_awaited_once()
+
+    async def test_auth_failure_respects_shared_cooldown(self):
+        gate = tn._AuthGate()
+        ws = self.make_socket()
+        credentials = ("wss://nas.example.test/api/current", "reader", "key")
+        with patch.object(tn, "_NoRedirectConnect", new_callable=AsyncMock) as connect, \
+                patch.object(tn, "_exchange", new_callable=AsyncMock) as exchange:
+            connect.return_value = ws
+            exchange.side_effect = RuntimeError("auth failed")
+            with self.assertRaises(RuntimeError):
+                await gate.login(credentials)
+            with self.assertRaisesRegex(RuntimeError, "cooling down"):
+                await gate.login((*credentials[:2], "other-key"))
+            connect.assert_awaited_once()
+            exchange.assert_awaited_once()
+            ws.close.assert_awaited_once()
+
+
 if __name__ == "__main__":
     unittest.main()
