@@ -210,7 +210,7 @@ imports or app lifecycle changes are authorized by these diagnostics.
 ### Scheduled health watch
 
 Use the current KB and live API evidence to distinguish expected service
-availability from actual status. For automated two-hour checks, notify only
+availability from actual status. For automated six-hour checks, notify only
 on meaningful new or worsening exceptions, material monitoring failures, or
 resolved incidents. Consolidate nonurgent warnings, suppress duplicates and
 expected maintenance, and omit routine healthy reports. Prefer native
@@ -245,7 +245,7 @@ Good candidates:
 Secrets must remain in Semaphore or another secret store and must not be committed to Git or returned through MCP output.
 
 
-### Stage 2 diagnostics (merged November 27, 2026; deployment not yet verified)
+### Stage 2 diagnostics (deployed and verified November 27, 2026)
 
 The first expansion adds cron schedule metadata (no command or description),
 session-visible cron middleware job history (not the host journal), exact
@@ -282,8 +282,7 @@ standalone skills only after reconciling the actual deployed capabilities.
 
 PRs #21 and #22 passed CI, merged, and were included in the published MCP image
 `ghcr.io/brentclothier/homelab-mcp:b19fbe51d6ab9742f3eb1635da359636b03abba8`.
-Live deployment, action refresh and validation are still required.
-Stage 3 adds catalog reads, explicitly allowlisted dataset creation,
+The owner redeployed and refreshed Action control November 27; all 32 TrueNAS actions were visible. Catalog reads, directory metadata and ACL reads succeeded; the scoped write credential successfully created the appdata and Semaphore parent datasets. Further writes stopped after temporary authentication failures. Stage 3 adds catalog reads, explicitly allowlisted dataset creation,
 nonrecursive snapshots and start/stop of non-management applications. Writes
 are disabled by default and require a separate administration credential,
 exact configured targets and target-specific confirmation. Confirmation binds
@@ -305,3 +304,7 @@ private configuration separately; never expose a general-purpose shell.
 Custom Compose deployment, application installation, backup runner wiring
 and consistent database backup remain future work. The existing MCP tunnel
 must not redeploy itself.
+
+### Persistent connection reliability (November 27, 2026)
+
+PR #23 passed CI and merged at ee56191889b659d2e5ae80399c2fad0b65e8b4a8. Separate persistent read/admin sessions serialize requests, pace new logins and respect a ten-minute authentication cooldown on failure. No automatic RPC replay. Keep verified TLS, backend target scopes and independent administration credentials. Temporary authentication failure recovered without key changes; rate limiting is the leading explanation, not a confirmed server-side diagnosis. Manual image redeploy and live validation are required; action schemas and environment variables are unchanged. Before resuming writes verify live inventory and preserve existing datasets. The config/database child datasets and sample restore remain pending.
