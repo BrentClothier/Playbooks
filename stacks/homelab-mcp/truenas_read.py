@@ -579,9 +579,21 @@ async def _deploy_semaphore(confirmation):
 
 async def _semaphore_status():
     app = await _semaphore_app()
+    job = _SEMAPHORE_JOB
+    if isinstance(job, dict) and type(job.get("job_id")) is int:
+        try:
+            rows = await _read("core.get_jobs", [[["id", "=", job["job_id"]],
+                ["method", "=", "app.create"]], {"limit": 1}])
+            if (isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict)
+                    and rows[0].get("id") == job["job_id"] and rows[0].get("method") == "app.create"):
+                job = _fields(rows[0], ("id", "state"))
+            else:
+                job = {"job_id": job["job_id"], "state": "NOT_VISIBLE"}
+        except RuntimeError:
+            job = {"job_id": job["job_id"], "state": "NOT_VISIBLE"}
     out = {"app": "semaphore", "approved_revision": _SEMAPHORE_REV,
            "approved_blob": _SEMAPHORE_BLOB, "installed": app is not None,
-           "last_create_job": _SEMAPHORE_JOB,
+           "last_create_job": job,
            "previous_attempt_recorded": _SEMAPHORE_ATTEMPT.exists(),
            "coverage": "Runtime and image-tag comparison only; not full Compose drift or functional health."}
     if app is None:
