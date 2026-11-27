@@ -1,5 +1,10 @@
 """Scoped TrueNAS 25.10 JSON-RPC 2.0 integration."""
 import asyncio
+import base64
+import hashlib
+import ipaddress
+from pathlib import Path
+import httpx
 from contextlib import asynccontextmanager
 import json
 import math
@@ -256,12 +261,16 @@ async def _exact_dataset(name, required=True):
 async def _admin_rpc(method, params):
     if method not in _WRITE_METHODS:
         raise ValueError("TrueNAS write method is not allowed.")
+    return await _admin_exchange(method, params)
+
+
+async def _admin_exchange(method, params):
     credentials = _write_credentials()
     try:
         async with asyncio.timeout(35):
             async with _ADMIN_SESSION.use(credentials) as session:
                 result = await session.call(method, params)
-                if method not in ("app.start", "app.stop"):
+                if method not in ("app.start", "app.stop", "app.create"):
                     return result
                 if type(result) is not int or result < 1:
                     raise RuntimeError("Unexpected application job identifier; verify state before retry.")
@@ -415,6 +424,193 @@ async def _directory_acl(dataset, relative_dir=""):
         **_fields(row, ("uid", "gid", "acltype")), "entries": entries,
         "truncated": len(row["acl"]) > 200,
         "coverage": "Reported directory ACL only; not effective access or recursive ACL audit."}
+
+
+
+# Initial Git-backed deployment: one immutable, CI-reviewed source and one
+# fixed app. Adding a revision or application requires reviewing MCP source.
+_SEMAPHORE_REV = "f6bb37ba1eda27d2fa700bfabcd4ddc52e61f32a"
+_SEMAPHORE_BLOB = "ed1c7643432311c32f0ae34abe9002f722f23df2"
+_SEMAPHORE_SOURCE = ("https://raw.githubusercontent.com/BrentClothier/Playbooks/"
+    + _SEMAPHORE_REV + "/stacks/semaphore-truenas/docker-compose.yml")
+_SEMAPHORE_ROOT = "USB_Storage_Space/appdata/semaphore"
+_SEMAPHORE_LOCK = asyncio.Lock()
+_SEMAPHORE_IMAGES = {"semaphore": "semaphoreui/semaphore:v2.20.23",
+                     "postgres": "postgres:16.16-trixie"}
+_SEMAPHORE_JOB = None
+_SEMAPHORE_ATTEMPT = Path('/data/semaphore-create-attempt.json')
+
+
+def _semaphore_secrets():
+    # Restricted alphabets prevent YAML/Compose interpolation, shell and
+    # newline injection. These are private runtime settings, never tool args.
+    db = os.getenv("TRUENAS_SEMAPHORE_DB_SECRET", "")
+    admin = os.getenv("TRUENAS_SEMAPHORE_ADMIN_SECRET", "")
+    encryption = os.getenv("TRUENAS_SEMAPHORE_ENCRYPTION_SECRET", "")
+    bind = os.getenv("TRUENAS_SEMAPHORE_BIND_ADDRESS", "")
+    if (not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", db) or
+            not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", admin) or db == admin):
+        raise ValueError("Set distinct private database and admin secrets (32–128 URL-safe characters).")
+    try:
+        if not re.fullmatch(r"[A-Za-z0-9+/]{43}=", encryption):
+            raise ValueError()
+        if len(base64.b64decode(encryption, validate=True)) != 32:
+            raise ValueError()
+        ip = ipaddress.IPv4Address(bind)
+        if not any(ip in ipaddress.IPv4Network(net) for net in
+                   ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")):
+            raise ValueError()
+    except ValueError:
+        raise ValueError("Set a private 32-byte base64 encryption key and RFC1918 IPv4 bind address.") from None
+    return db, admin, encryption, str(ip)
+
+
+async def _semaphore_template():
+    data = bytearray()
+    try:
+        async with asyncio.timeout(15):
+            async with httpx.AsyncClient(follow_redirects=False, trust_env=False,
+                                         timeout=10) as client:
+                async with client.stream("GET", _SEMAPHORE_SOURCE) as resp:
+                    if resp.status_code != 200:
+                        raise RuntimeError("Pinned Compose download failed.")
+                    async for chunk in resp.aiter_bytes():
+                        data.extend(chunk)
+                        if len(data) > 65536:
+                            raise RuntimeError("Pinned Compose exceeds size limit.")
+    except (TimeoutError, httpx.HTTPError):
+        raise RuntimeError("Pinned Compose download unavailable.") from None
+    # Verify the Git blob identity in addition to pinning the immutable commit.
+    digest = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+    if digest != _SEMAPHORE_BLOB:
+        raise RuntimeError("Pinned Compose content does not match approved Git blob.")
+    return data.decode("utf-8")
+
+
+def _render_semaphore(template, values):
+    db, admin, encryption, bind = values
+    substitutions = (
+        ("${SEMAPHORE_DB_PASSWORD:?Set private database password}", db, 2),
+        ("${SEMAPHORE_ADMIN_PASSWORD:?Set private administrator password}", admin, 1),
+        ("${SEMAPHORE_ACCESS_KEY_ENCRYPTION:?Set private base64 key}", encryption, 1),
+        ("${SEMAPHORE_BIND_ADDRESS:?Set approved private host address}", bind, 1),
+    )
+    for token, value, count in substitutions:
+        if template.count(token) != count:
+            raise RuntimeError("Reviewed Compose placeholder mismatch.")
+        # Bind placeholder already occurs inside a quoted port mapping.
+        template = template.replace(token, value if value == bind else json.dumps(value))
+    if "${" in template:
+        raise RuntimeError("Unresolved Compose interpolation.")
+    return template
+
+
+async def _semaphore_app():
+    rows = await _read("app.query", [[["id", "=", "semaphore"]],
+        {"limit": 2, "extra": {"retrieve_config": False, "include_app_schema": False}}])
+    if not isinstance(rows, list) or len(rows) > 1 or (rows and (
+            not isinstance(rows[0], dict) or rows[0].get("id") != "semaphore")):
+        raise RuntimeError("Unexpected Semaphore inventory response.")
+    return rows[0] if rows else None
+
+
+async def _semaphore_preflight(bind):
+    if await _semaphore_app() is not None:
+        raise ValueError("Semaphore already exists; create-only deployment will not replace it.")
+    for child in ("config", "database"):
+        dataset = _SEMAPHORE_ROOT + "/" + child
+        await _dataset_root_stat(dataset)
+        rows = await _read("filesystem.listdir", ["/mnt/" + dataset, [],
+            {"limit": 1, "select": ["name"]}])
+        if not isinstance(rows, list) or rows:
+            raise ValueError("Initial deployment requires empty config and database datasets.")
+    tasks = await _read("pool.snapshottask.query", [[["dataset", "=", "USB_Storage_Space/appdata"]],
+                  {"limit": 20}])
+    if not isinstance(tasks, list) or not any(isinstance(t, dict) and
+            t.get("enabled") is True and t.get("recursive") is True for t in tasks):
+        raise ValueError("Enabled recursive appdata snapshots required.")
+    interfaces = await _read("interface.query", [])
+    if not isinstance(interfaces, list) or not any(
+            alias.get("address") == bind
+            for row in interfaces if isinstance(row, dict)
+            for alias in ((row.get("state") or {}).get("aliases") or [])
+            if isinstance(alias, dict)):
+        raise ValueError("Bind address is not present in live TrueNAS interface inventory.")
+
+
+
+def _record_semaphore_attempt():
+    # Persistent nonsecret fence across restarts. Owner must inspect the app,
+    # jobs and datasets before manually clearing a failed/unknown attempt.
+    try:
+        with _SEMAPHORE_ATTEMPT.open("x", encoding="utf-8") as f:
+            json.dump({"revision": _SEMAPHORE_REV}, f)
+            f.flush()
+            os.fsync(f.fileno())
+    except FileExistsError:
+        raise ValueError("Prior Semaphore create attempt recorded; inspect live state before any retry.") from None
+    except OSError:
+        raise RuntimeError("Cannot persist the Semaphore create safety record; no deployment attempted.") from None
+
+
+async def _deploy_semaphore(confirmation):
+    global _SEMAPHORE_JOB
+    _write_credentials()
+    if os.getenv("TRUENAS_SEMAPHORE_DEPLOY_ENABLED") != "true":
+        raise ValueError("Git-backed Semaphore deployment is disabled.")
+    if confirmation != "create:semaphore:" + _SEMAPHORE_REV:
+        raise ValueError("Confirm exact create action, app and approved Git revision.")
+    values = _semaphore_secrets()
+    async with _SEMAPHORE_LOCK:
+        if _SEMAPHORE_JOB is not None or _SEMAPHORE_ATTEMPT.exists():
+            raise ValueError("Previous create was attempted; inspect app and job status before any retry.")
+        template = await _semaphore_template()
+        rendered = _render_semaphore(template, values)
+        await _semaphore_preflight(values[-1])
+        # Mark before send: never replay after ambiguous response.
+        _record_semaphore_attempt()
+        _SEMAPHORE_JOB = {"state": "SUBMITTED_OR_UNKNOWN"}
+        result = await _admin_exchange("app.create", [{"app_name": "semaphore",
+            "custom_app": True, "custom_compose_config_string": rendered}])
+        _SEMAPHORE_JOB = result
+        return {"app": "semaphore", "revision": _SEMAPHORE_REV,
+                "job": result, "coverage": "Creation job only; verify runtime and login separately."}
+
+
+async def _semaphore_status():
+    app = await _semaphore_app()
+    job = _SEMAPHORE_JOB
+    if isinstance(job, dict) and type(job.get("job_id")) is int:
+        try:
+            rows = await _read("core.get_jobs", [[["id", "=", job["job_id"]],
+                ["method", "=", "app.create"]], {"limit": 1}])
+            if (isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict)
+                    and rows[0].get("id") == job["job_id"] and rows[0].get("method") == "app.create"):
+                job = _fields(rows[0], ("id", "state"))
+            else:
+                job = {"job_id": job["job_id"], "state": "NOT_VISIBLE"}
+        except RuntimeError:
+            job = {"job_id": job["job_id"], "state": "NOT_VISIBLE"}
+    out = {"app": "semaphore", "approved_revision": _SEMAPHORE_REV,
+           "approved_blob": _SEMAPHORE_BLOB, "installed": app is not None,
+           "last_create_job": job,
+           "previous_attempt_recorded": _SEMAPHORE_ATTEMPT.exists(),
+           "coverage": "Runtime and image-tag comparison only; not full Compose drift or functional health."}
+    if app is None:
+        return out
+    out["app_state"] = _fields(app, ("id", "state", "custom_app"))
+    containers = await _app_containers("semaphore", 20)
+    found = {}
+    for row in containers.get("items", []):
+        if row.get("service_name") in _SEMAPHORE_IMAGES:
+            found[row["service_name"]] = row
+    out["services"] = {name: {
+        "expected_image": image,
+        "image_matches": (found[name].get("image", "").split("@")[0] == image)
+                         if name in found else None,
+        "state": found[name].get("state") if name in found else None}
+        for name, image in _SEMAPHORE_IMAGES.items()}
+    return out
 
 
 def _safe_value(value):
@@ -921,3 +1117,13 @@ def register(mcp):
     async def truenas_directory_acl(dataset: str, relative_dir: str = ""):
         """Read numeric owner and selected ACL entries for one verified directory on an enabled dataset. No permission changes."""
         return await _directory_acl(dataset, relative_dir)
+
+    @mcp.tool
+    async def truenas_deploy_semaphore(confirmation: str):
+        """Create only the fixed approved Git-backed Semaphore app with private configured secrets; no arbitrary YAML, repo, revision, update or deletion. Confirm create:semaphore:f6bb37ba1eda27d2fa700bfabcd4ddc52e61f32a."""
+        return await _deploy_semaphore(confirmation)
+
+    @mcp.tool
+    async def truenas_semaphore_deployment_status():
+        """Read Semaphore runtime state and compare expected service images; never expose config, credentials or job arguments."""
+        return await _semaphore_status()

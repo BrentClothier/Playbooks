@@ -22,3 +22,42 @@ The confirmation string is a target-binding input check, not an independent huma
 First create a deliberately approved empty application dataset, inspect its root stat, create a nonrecursive snapshot, and requery inventory. Test application lifecycle on an approved noncritical app only, not Tailscale or the management plane. Job success plus reported app state is not a functional endpoint check. A pending or unknown job outcome requires inspection before retrying. Never automatically clean up or roll back on failure. Keep write credentials disabled until CI and deployment are verified.
 
 Documentation for the 25.10 API: https://api.truenas.com/v25.10/ (pool.dataset.create, pool.snapshot.create, app.available, app.start, app.stop). The exact deployed patch release still requires live validation.
+
+## Git-backed Semaphore bootstrap
+
+The first deployment action is deliberately create-only and fixed to Semaphore,
+the reviewed Playbooks merge commit f6bb37ba1eda27d2fa700bfabcd4ddc52e61f32a,
+and the approved Compose blob ed1c7643432311c32f0ae34abe9002f722f23df2.
+The server downloads the exact file over verified HTTPS, rejects redirects and
+unexpected content, and accepts no caller-supplied YAML, URL, Git ref or app name.
+Future approved versions require a separately reviewed code change.
+
+Set these private MCP environment variables only if the owner approves initial
+deployment:
+- TRUENAS_SEMAPHORE_DEPLOY_ENABLED=true
+- TRUENAS_SEMAPHORE_DB_SECRET: unique random 32–128 URL-safe characters.
+- TRUENAS_SEMAPHORE_ADMIN_SECRET: a different random 32–128 URL-safe characters.
+- TRUENAS_SEMAPHORE_ENCRYPTION_SECRET: standard base64 encoding of 32 random bytes.
+- TRUENAS_SEMAPHORE_BIND_ADDRESS: exact private IPv4 assigned to the TrueNAS host.
+
+The existing separate admin credential must be enabled. Keep credentials out of
+Git, chat and logs. The rendered Compose configuration is stored by TrueNAS and
+is accessible to appropriately privileged NAS administrators; it is not an
+encrypted secret store. Keep a secure private copy for disaster recovery.
+
+The action checks the app does not exist, both datasets are mounted and empty,
+a recursive appdata snapshot task is enabled, and the private bind address
+exists. It records a nonsecret create-attempt fence in the MCP persistent
+volume before the write. No automatic retries: if deployment fails or the
+result is unknown, inspect TrueNAS jobs, app state and datasets manually. Only
+after verifying there is no running job or app and no partial data should the
+owner consider clearing the persistent attempt record; never clear it merely
+to force a retry. No action exposes reset, update, delete or arbitrary shell.
+
+The status action reports expected Git revision, live app state, selected
+service image-tag matches and session-visible job metadata only. It does not
+prove full Compose configuration equivalence, HTTPS, or application login.
+Create only after CI, publication, manual deployment and Action control
+refresh. Before production use, verify functional login and consistent
+database backup and restore. The legacy Semaphore remains available until
+the replacement is verified.

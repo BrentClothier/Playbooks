@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch, AsyncMock
 
 import truenas_read as tn
@@ -427,6 +429,143 @@ class TrueNASSessionTests(unittest.IsolatedAsyncioTestCase):
             connect.assert_awaited_once()
             exchange.assert_awaited_once()
             ws.close.assert_awaited_once()
+
+
+
+class TrueNASSemaphoreDeployTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.env = patch.dict(os.environ, {
+            "TRUENAS_URL": "https://nas.example.test",
+            "TRUENAS_API_KEY": "read-test-key",
+            "TRUENAS_VERIFY_SSL": "true",
+            "TRUENAS_ADMIN_ENABLED": "true",
+            "TRUENAS_ADMIN_USERNAME": "admin-test",
+            "TRUENAS_ADMIN_API_KEY": "write-test-key",
+            "TRUENAS_SEMAPHORE_DEPLOY_ENABLED": "true",
+            "TRUENAS_SEMAPHORE_DB_SECRET": "D" * 48,
+            "TRUENAS_SEMAPHORE_ADMIN_SECRET": "A" * 48,
+            "TRUENAS_SEMAPHORE_ENCRYPTION_SECRET": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "TRUENAS_SEMAPHORE_BIND_ADDRESS": "192.168.10.20",
+        }, clear=True)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.job = patch.object(tn, "_SEMAPHORE_JOB", None)
+        self.job.start()
+        self.addCleanup(self.job.stop)
+        self.lock = patch.object(tn, "_SEMAPHORE_LOCK", asyncio.Lock())
+        self.lock.start()
+        self.addCleanup(self.lock.stop)
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.attempt = patch.object(tn, "_SEMAPHORE_ATTEMPT", Path(self.temp.name) / "attempt.json")
+        self.attempt.start()
+        self.addCleanup(self.attempt.stop)
+        self.confirm = "create:semaphore:" + tn._SEMAPHORE_REV
+        self.template = (
+            'POSTGRES_PASSWORD: ${SEMAPHORE_DB_PASSWORD:?Set private database password}\n'
+            'SEMAPHORE_DB_PASS: ${SEMAPHORE_DB_PASSWORD:?Set private database password}\n'
+            'SEMAPHORE_ADMIN_PASSWORD: ${SEMAPHORE_ADMIN_PASSWORD:?Set private administrator password}\n'
+            'SEMAPHORE_ACCESS_KEY_ENCRYPTION: ${SEMAPHORE_ACCESS_KEY_ENCRYPTION:?Set private base64 key}\n'
+            'port: "${SEMAPHORE_BIND_ADDRESS:?Set approved private host address}:3000:3000"\n'
+            'command: $literal\n')
+
+    async def test_disabled_wrong_revision_and_injection_denied(self):
+        with patch.object(tn, "_semaphore_template", new_callable=AsyncMock) as fetch:
+            with self.assertRaises(ValueError):
+                await tn._deploy_semaphore("create:semaphore:main")
+            with patch.dict(os.environ, {"TRUENAS_SEMAPHORE_DEPLOY_ENABLED": "false"}):
+                with self.assertRaises(ValueError):
+                    await tn._deploy_semaphore(self.confirm)
+            for key, value in (
+                ("TRUENAS_SEMAPHORE_DB_SECRET", "x\nprivileged: true"),
+                ("TRUENAS_SEMAPHORE_ADMIN_SECRET", "D" * 48),
+                ("TRUENAS_SEMAPHORE_BIND_ADDRESS", "0.0.0.0"),
+                ("TRUENAS_SEMAPHORE_ENCRYPTION_SECRET", "not-base64"),
+            ):
+                with patch.dict(os.environ, {key: value}):
+                    with self.assertRaises(ValueError):
+                        await tn._deploy_semaphore(self.confirm)
+            fetch.assert_not_awaited()
+
+    def test_pinned_source_matches_approved_git_blob(self):
+        source = Path(__file__).resolve().parents[1] / "semaphore-truenas" / "docker-compose.yml"
+        data = source.read_bytes()
+        self.assertEqual(tn.hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest(), tn._SEMAPHORE_BLOB)
+        rendered = tn._render_semaphore(data.decode("utf-8"), tn._semaphore_secrets())
+        self.assertNotIn("${", rendered)
+
+    def test_render_only_expected_placeholders(self):
+        values = tn._semaphore_secrets()
+        result = tn._render_semaphore(self.template, values)
+        self.assertNotIn("${", result)
+        self.assertIn('POSTGRES_PASSWORD: "' + "D" * 48 + '"', result)
+        self.assertIn('"192.168.10.20:3000:3000"', result)
+        self.assertIn("$literal", result)
+        for text in (self.template + "${UNAPPROVED}", self.template.replace("Set private base64 key", "changed")):
+            with self.assertRaises(RuntimeError):
+                tn._render_semaphore(text, values)
+
+    async def test_existing_app_refused(self):
+        with patch.object(tn, "_semaphore_app", new_callable=AsyncMock) as app:
+            app.return_value = {"id": "semaphore"}
+            with self.assertRaises(ValueError):
+                await tn._semaphore_preflight("192.168.10.20")
+
+    async def test_preflight_nonempty_dataset_rejected(self):
+        with patch.object(tn, "_semaphore_app", new_callable=AsyncMock, return_value=None), \
+                patch.object(tn, "_dataset_root_stat", new_callable=AsyncMock), \
+                patch.object(tn, "_read", new_callable=AsyncMock, return_value=[{"name": "old-data"}]):
+            with self.assertRaises(ValueError):
+                await tn._semaphore_preflight("192.168.10.20")
+
+    async def test_preflight_requires_recursive_snapshot_and_local_bind(self):
+        with patch.object(tn, "_semaphore_app", new_callable=AsyncMock, return_value=None), \
+                patch.object(tn, "_dataset_root_stat", new_callable=AsyncMock), \
+                patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            read.side_effect = [[], [], [{"enabled": True, "recursive": False}]]
+            with self.assertRaises(ValueError):
+                await tn._semaphore_preflight("192.168.10.20")
+            read.side_effect = [[], [], [{"enabled": True, "recursive": True}], []]
+            with self.assertRaises(ValueError):
+                await tn._semaphore_preflight("192.168.10.20")
+            read.side_effect = [[], [], [{"enabled": True, "recursive": True}],
+                                [{"state": {"aliases": [{"address": "192.168.10.20"}]}}]]
+            await tn._semaphore_preflight("192.168.10.20")
+
+    async def test_fixed_create_and_no_replay_or_secret_output(self):
+        with patch.object(tn, "_semaphore_template", new_callable=AsyncMock, return_value=self.template), \
+                patch.object(tn, "_semaphore_preflight", new_callable=AsyncMock), \
+                patch.object(tn, "_admin_exchange", new_callable=AsyncMock) as write:
+            write.return_value = {"job_id": 42, "state": "PENDING_OR_UNKNOWN"}
+            result = await tn._deploy_semaphore(self.confirm)
+            method, params = write.call_args.args
+            self.assertEqual(method, "app.create")
+            self.assertEqual(params[0]["app_name"], "semaphore")
+            self.assertTrue(params[0]["custom_app"])
+            self.assertIn("D" * 48, params[0]["custom_compose_config_string"])
+            self.assertNotIn("D" * 48, json.dumps(result))
+            self.assertEqual(result["job"]["job_id"], 42)
+            with self.assertRaises(ValueError):
+                await tn._deploy_semaphore(self.confirm)
+            write.assert_awaited_once()
+
+    async def test_ambiguous_create_not_replayed(self):
+        with patch.object(tn, "_semaphore_template", new_callable=AsyncMock, return_value=self.template), \
+                patch.object(tn, "_semaphore_preflight", new_callable=AsyncMock), \
+                patch.object(tn, "_admin_exchange", new_callable=AsyncMock) as write:
+            write.side_effect = RuntimeError("unknown")
+            with self.assertRaises(RuntimeError):
+                await tn._deploy_semaphore(self.confirm)
+            with self.assertRaises(ValueError):
+                await tn._deploy_semaphore(self.confirm)
+            write.assert_awaited_once()
+
+    async def test_persisted_attempt_denies_create_after_restart(self):
+        tn._record_semaphore_attempt()
+        with patch.object(tn, "_semaphore_template", new_callable=AsyncMock) as fetch:
+            with self.assertRaises(ValueError):
+                await tn._deploy_semaphore(self.confirm)
+            fetch.assert_not_awaited()
 
 
 if __name__ == "__main__":
