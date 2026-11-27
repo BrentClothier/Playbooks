@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch, AsyncMock
 
 import truenas_read as tn
@@ -453,6 +455,11 @@ class TrueNASSemaphoreDeployTests(unittest.IsolatedAsyncioTestCase):
         self.lock = patch.object(tn, "_SEMAPHORE_LOCK", asyncio.Lock())
         self.lock.start()
         self.addCleanup(self.lock.stop)
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.attempt = patch.object(tn, "_SEMAPHORE_ATTEMPT", Path(self.temp.name) / "attempt.json")
+        self.attempt.start()
+        self.addCleanup(self.attempt.stop)
         self.confirm = "create:semaphore:" + tn._SEMAPHORE_REV
         self.template = (
             'POSTGRES_PASSWORD: ${SEMAPHORE_DB_PASSWORD:?Set private database password}\n'
@@ -545,6 +552,13 @@ class TrueNASSemaphoreDeployTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 await tn._deploy_semaphore(self.confirm)
             write.assert_awaited_once()
+
+    async def test_persisted_attempt_denies_create_after_restart(self):
+        tn._record_semaphore_attempt()
+        with patch.object(tn, "_semaphore_template", new_callable=AsyncMock) as fetch:
+            with self.assertRaises(ValueError):
+                await tn._deploy_semaphore(self.confirm)
+            fetch.assert_not_awaited()
 
 
 if __name__ == "__main__":
