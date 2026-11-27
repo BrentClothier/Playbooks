@@ -22,5 +22,5 @@ jobs:
       - name: Validate backup helper
         working-directory: scripts/truenas
         run: |
-          python -m py_compile backup_ops.py
-          python -m unittest -v test_backup_ops.py
+          python -m py_compile backup_ops.py semaphore_db_backup.py
+          python -m unittest -v test_backup_ops.py test_semaphore_db_backup.py
