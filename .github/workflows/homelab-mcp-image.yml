@@ -24,8 +24,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Install WebSocket test dependency
-        run: python -m pip install 'websockets>=15,<16'
+      - name: Install TrueNAS client test dependencies
+        run: python -m pip install 'websockets>=15,<16' 'httpx>=0.28,<1'
       - name: Test TrueNAS read-only client
         working-directory: stacks/homelab-mcp
         run: |
