@@ -57,6 +57,7 @@ _READ_METHODS = frozenset({
     "rsynctask.query", "reporting.get_data", "pool.import_find",
     "update.status", "vm.status", "nfs.client_count",
     "cronjob.query", "filesystem.stat", "app.container_console_choices", "app.available",
+    "filesystem.listdir", "filesystem.getacl",
 })
 
 
@@ -286,6 +287,70 @@ async def _set_app_state(name, action, confirmation):
             "coverage": "Job and reported app state only; not endpoint health."}
 
 
+
+# Stage 4 native filesystem metadata, disabled until explicit dataset scope.
+# No file contents, arbitrary absolute paths, recursion or mount crossing.
+async def _diagnostic_directory(dataset, relative_dir):
+    dataset = _dataset_name(dataset)
+    permitted = {x.strip() for x in os.getenv("TRUENAS_DIAGNOSTIC_DATASETS", "").split(",") if x.strip()}
+    if dataset not in permitted:
+        raise ValueError("Dataset not enabled for directory and ACL inspection.")
+    if not isinstance(relative_dir, str) or len(relative_dir) > 240:
+        raise ValueError("Invalid relative directory.")
+    parts = relative_dir.split("/") if relative_dir else []
+    if len(parts) > 4 or any(not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_. -]{0,79}", p)
+                             or p in (".", "..") for p in parts):
+        raise ValueError("Invalid relative directory.")
+    await _dataset_root_stat(dataset)
+    path = "/mnt/" + dataset
+    for part in parts:
+        path += "/" + part
+        row = await _read("filesystem.stat", [path])
+        if (not isinstance(row, dict) or row.get("realpath") != path or
+                row.get("type") != "DIRECTORY" or row.get("is_mountpoint") is not False):
+            raise ValueError("Child directory not verified or crosses a mountpoint.")
+    return path
+
+
+async def _directory_entries(dataset, relative_dir="", limit=50, offset=0):
+    path = await _diagnostic_directory(dataset, relative_dir)
+    count = _limit(limit)
+    offset = max(0, min(int(offset), 10000))
+    fields = ("name", "type", "size", "uid", "gid", "mode", "acl")
+    rows = await _read("filesystem.listdir", [path, [], {"limit": count,
+        "offset": offset, "order_by": ["name"], "select": list(fields)}])
+    return {"dataset": dataset, "relative_dir": relative_dir,
+            **_rows(rows, fields, count, offset),
+            "coverage": "One directory, selected metadata; sizes are not recursive usage."}
+
+
+_ACL_PERMS = ("BASIC", "READ", "WRITE", "EXECUTE", "READ_DATA", "WRITE_DATA",
+              "APPEND_DATA", "READ_NAMED_ATTRS", "WRITE_NAMED_ATTRS",
+              "DELETE_CHILD", "READ_ATTRIBUTES", "WRITE_ATTRIBUTES", "DELETE",
+              "READ_ACL", "WRITE_ACL", "WRITE_OWNER", "SYNCHRONIZE")
+_ACL_FLAGS = ("BASIC", "FILE_INHERIT", "DIRECTORY_INHERIT",
+              "NO_PROPAGATE_INHERIT", "INHERIT_ONLY", "INHERITED")
+
+
+async def _directory_acl(dataset, relative_dir=""):
+    path = await _diagnostic_directory(dataset, relative_dir)
+    row = await _read("filesystem.getacl", [path, True, False])
+    if (not isinstance(row, dict) or row.get("path") != path or
+            not isinstance(row.get("acl"), list)):
+        raise RuntimeError("Unexpected ACL response.")
+    entries = []
+    for ace in row["acl"][:200]:
+        out = _fields(ace, ("tag", "type", "id", "default"))
+        for field, keys in (("perms", _ACL_PERMS), ("flags", _ACL_FLAGS)):
+            if isinstance(ace.get(field), dict):
+                out[field] = _fields(ace[field], keys)
+        entries.append(out)
+    return {"dataset": dataset, "relative_dir": relative_dir,
+        **_fields(row, ("uid", "gid", "acltype")), "entries": entries,
+        "truncated": len(row["acl"]) > 200,
+        "coverage": "Reported directory ACL only; not effective access or recursive ACL audit."}
+
+
 def _safe_value(value):
     # Do not expose arbitrary dictionaries, application configs, or job arguments.
     if value is None or isinstance(value, (bool, int, float)):
@@ -319,10 +384,12 @@ def _rows(result, fields, limit, offset=0, transform=None):
     }
 
 
-async def _query(method, fields, limit=100, offset=0, extra=None, transform=None, filters=None):
+async def _query(method, fields, limit=100, offset=0, extra=None, transform=None, filters=None, order_by=None):
     count = _limit(limit)
     offset = max(0, min(int(offset), 10000))
     opts = {"limit": count, "offset": offset}
+    if order_by is not None:
+        opts["order_by"] = order_by
     if extra is not None:
         opts["extra"] = extra
     result = await _read(method, [filters or [], opts])
@@ -741,7 +808,7 @@ def register(mcp):
         """Read session-visible cronjob.run job metadata. Does not read system journal or prove scheduled execution."""
         result = await _query("core.get_jobs",
             ("id", "method", "state", "time_started", "time_finished"), limit, offset,
-            filters=[["method", "=", "cronjob.run"]])
+            filters=[["method", "=", "cronjob.run"]], order_by=["-id"])
         result["coverage"] = "Session-visible middleware jobs only; ordinary cron execution may not appear."
         return result
 
@@ -778,3 +845,13 @@ def register(mcp):
     async def truenas_set_app_state(name: str, action: str, confirmation: str):
         """Start or stop one enabled non-management application. Confirm start:name or stop:name. No redeploy, restart or delete."""
         return await _set_app_state(name, action, confirmation)
+
+    @mcp.tool
+    async def truenas_directory_entries(dataset: str, relative_dir: str = "", limit: int = 50, offset: int = 0):
+        """List bounded metadata for one directory on an explicitly enabled dataset; no content, symlink traversal or nested mounts."""
+        return await _directory_entries(dataset, relative_dir, limit, offset)
+
+    @mcp.tool
+    async def truenas_directory_acl(dataset: str, relative_dir: str = ""):
+        """Read numeric owner and selected ACL entries for one verified directory on an enabled dataset. No permission changes."""
+        return await _directory_acl(dataset, relative_dir)

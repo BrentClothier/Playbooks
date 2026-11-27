@@ -1,0 +1,26 @@
+name: Validate TrueNAS backup helpers
+on:
+  pull_request:
+    paths:
+      - 'scripts/truenas/**'
+      - '.github/workflows/truenas-backup-checks.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/truenas/**'
+      - '.github/workflows/truenas-backup-checks.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Validate backup helper
+        working-directory: scripts/truenas
+        run: |
+          python -m py_compile backup_ops.py
+          python -m unittest -v test_backup_ops.py
