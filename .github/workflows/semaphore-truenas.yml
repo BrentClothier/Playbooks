@@ -1,0 +1,24 @@
+name: Validate TrueNAS Semaphore Compose
+on:
+  pull_request:
+    paths:
+      - 'stacks/semaphore-truenas/**'
+      - '.github/workflows/semaphore-truenas.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'stacks/semaphore-truenas/**'
+      - '.github/workflows/semaphore-truenas.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      SEMAPHORE_DB_PASSWORD: test-only-not-for-deployment
+      SEMAPHORE_ADMIN_PASSWORD: test-only-not-for-deployment
+      SEMAPHORE_ACCESS_KEY_ENCRYPTION: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      SEMAPHORE_BIND_ADDRESS: 127.0.0.1
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f stacks/semaphore-truenas/docker-compose.yml config --quiet

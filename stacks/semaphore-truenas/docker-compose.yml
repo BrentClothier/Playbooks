@@ -1,0 +1,93 @@
+# Render with private environment values; never commit rendered credentials.
+services:
+  prepare:
+    image: semaphoreui/semaphore:v2.20.23
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        for name in config data; do
+          path="/persistent/$$name"
+          if [ -L "$$path" ]; then exit 1; fi
+          if [ ! -e "$$path" ]; then
+            mkdir "$$path"
+            chown 1001:0 "$$path"
+            chmod 0700 "$$path"
+          fi
+          test -d "$$path"
+          test "$$(stat -c %u "$$path")" = 1001
+        done
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
+    volumes:
+      - type: bind
+        source: /mnt/USB_Storage_Space/appdata/semaphore/config
+        target: /persistent
+        bind:
+          create_host_path: false
+    restart: "no"
+
+  postgres:
+    image: postgres:16.16-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: semaphore
+      POSTGRES_DB: semaphore
+      POSTGRES_PASSWORD: ${SEMAPHORE_DB_PASSWORD:?Set private database password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - type: bind
+        source: /mnt/USB_Storage_Space/appdata/semaphore/database
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "semaphore", "-d", "semaphore"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [backend]
+
+  semaphore:
+    image: semaphoreui/semaphore:v2.20.23
+    restart: unless-stopped
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      SEMAPHORE_DB_DIALECT: postgres
+      SEMAPHORE_DB_HOST: postgres
+      SEMAPHORE_DB_PORT: "5432"
+      SEMAPHORE_DB: semaphore
+      SEMAPHORE_DB_USER: semaphore
+      SEMAPHORE_DB_PASS: ${SEMAPHORE_DB_PASSWORD:?Set private database password}
+      SEMAPHORE_ADMIN: admin
+      SEMAPHORE_ADMIN_NAME: Administrator
+      SEMAPHORE_ADMIN_EMAIL: admin@localhost
+      SEMAPHORE_ADMIN_PASSWORD: ${SEMAPHORE_ADMIN_PASSWORD:?Set private administrator password}
+      SEMAPHORE_ACCESS_KEY_ENCRYPTION: ${SEMAPHORE_ACCESS_KEY_ENCRYPTION:?Set private base64 key}
+      SEMAPHORE_CONFIG_PATH: /persistent/config
+      SEMAPHORE_DB_PATH: /persistent/data
+      TZ: America/Los_Angeles
+    volumes:
+      - type: bind
+        source: /mnt/USB_Storage_Space/appdata/semaphore/config
+        target: /persistent
+        bind:
+          create_host_path: false
+    ports:
+      - "${SEMAPHORE_BIND_ADDRESS:?Set approved private host address}:3000:3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    networks: [backend]
+
+networks:
+  backend: {}
