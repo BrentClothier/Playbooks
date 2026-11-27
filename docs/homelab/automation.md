@@ -27,6 +27,8 @@ Require node/guest/task path validation, finite result limits, selected config f
 
 ## Semaphore
 
+Current direction: fresh official Semaphore image with PostgreSQL on TrueNAS, Git-backed Compose, dedicated persistent datasets, private credentials, consistent database backup. Recreate needed templates; preserve old management access until tested. The owner does not require old database migration unless an actual dependency warrants it.
+
 Semaphore is the preferred state-changing automation layer.
 
 Current projects:
@@ -243,14 +245,14 @@ Good candidates:
 Secrets must remain in Semaphore or another secret store and must not be committed to Git or returned through MCP output.
 
 
-### Stage 2 diagnostics (proposed November 27, 2026)
+### Stage 2 diagnostics (merged November 27, 2026; deployment not yet verified)
 
 The first expansion adds cron schedule metadata (no command or description),
 session-visible cron middleware job history (not the host journal), exact
 inventoried ZFS dataset-root stat metadata (no arbitrary paths or file
 contents), and installed application container inventory (no console access).
 Historical reporting accepts either dictionary samples or legend-aligned
-array samples, otherwise reports unknown. The four new actions remain
+array samples, otherwise reports unknown. PR #20 passed CI and was merged. Image publication, deployment and action refresh are separate gates. The four new actions remain
 read-only and require the deployed API version and corresponding read roles.
 The cron history endpoint cannot prove an ordinary scheduled cron run.
 
