@@ -277,3 +277,31 @@ The new application datasets require their own snapshot and backup coverage.
 Deployment requires CI, merge, image publication, manual redeploy outside the
 active MCP tunnel, action refresh and live validation. Update bundled and
 standalone skills only after reconciling the actual deployed capabilities.
+
+### Stages 3 and 4 (merged and published November 27, 2026)
+
+PRs #21 and #22 passed CI, merged, and were included in the published MCP image
+`ghcr.io/brentclothier/homelab-mcp:b19fbe51d6ab9742f3eb1635da359636b03abba8`.
+Live deployment, action refresh and validation are still required.
+Stage 3 adds catalog reads, explicitly allowlisted dataset creation,
+nonrecursive snapshots and start/stop of non-management applications. Writes
+are disabled by default and require a separate administration credential,
+exact configured targets and target-specific confirmation. Confirmation binds
+intent to the target but is not independent human authorization. Configure the
+least privileged account supported by TrueNAS. Stage 4 adds bounded directory
+metadata and ACL reads for explicitly permitted dataset roots, and sorts cron
+job history. No arbitrary file contents or host shell are exposed.
+
+Configuration keys: TRUENAS_ADMIN_ENABLED, TRUENAS_ADMIN_USERNAME,
+TRUENAS_ADMIN_API_KEY, TRUENAS_ADMIN_DATASETS,
+TRUENAS_ADMIN_SNAPSHOT_DATASETS, TRUENAS_ADMIN_APPS and
+TRUENAS_DIAGNOSTIC_DATASETS. Keep credentials out of Git and model output.
+See stacks/homelab-mcp/.env.example and README-admin.md for configuration.
+
+The fixed-purpose scripts/truenas/backup_ops.py helper has passed CI but is
+not installed on the host or wired to an approved execution template. No
+live restore has been performed. Install and approve the exact command and
+private configuration separately; never expose a general-purpose shell.
+Custom Compose deployment, application installation, backup runner wiring
+and consistent database backup remain future work. The existing MCP tunnel
+must not redeploy itself.
