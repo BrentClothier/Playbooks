@@ -16,6 +16,27 @@ Independent single-drive USB pool `Backup` has sibling datasets files, applicati
 
 ## Remaining protection
 
-Perform a representative restore into isolated temporary storage and compare checksums; do not overwrite source data. Create dedicated appdata datasets with explicit snapshot and independent backup coverage. Protect PostgreSQL/MariaDB using consistent logical backups, plus application assets and configuration. Monitor capacity/retention, automate private system configuration exports, consider offsite copies of irreplaceable files. Verify backup results and restore evidence separately; never imply scheduled jobs guarantee recovery.
+The representative restore and legacy checksum verification passed (see evidence below). Hourly recursive appdata snapshots, retained 14 days, have reported successful runs. Independent appdata replication is still needed. Protect PostgreSQL/MariaDB using consistent logical backups, plus application assets and configuration. Monitor capacity/retention, automate private system configuration exports, consider offsite copies of irreplaceable files. Verify backup results and restore evidence separately; never imply scheduled jobs guarantee recovery.
 
 Live APIs are authoritative for current pool health, capacity and snapshots. Report missing cron/journal, restore, SMART or per-file ACL coverage honestly. Preserve backups and data when retiring legacy compute.
+
+
+## Verified runner evidence (November 27, 2026)
+
+Native Semaphore project 1, restore task 2: 53,805 bytes restored to a
+private temporary file, SHA256 matched backup and source; temporary file
+removed. Verify task 4: 17m13s, both selected groups returned rsync exit 0
+and zero regular files needing transfer. No deletion or synchronization
+writes. These checks do not establish metadata-only equality, extra
+backup-file status, database consistency, full media coverage or offsite
+recovery. The initial verify task 3 failed before reporting results; the
+retry passed, but the original cause is not established.
+
+Both pools reported ONLINE on subsequent inventory; independent backup
+pool had about 634 GiB available. Native appdata held about 17 MiB including
+snapshots, with Semaphore config and database child datasets. Native
+replication configuration was absent at inspection. Use separate private
+backup destinations and never overwrite the existing legacy copies. Preserve
+Semaphore encryption settings with its database, and protect copies of SSH
+keys and config from disclosure. See scripts/truenas/README-appdata-recovery.md
+for next-stage procedure (not proof of implementation).
