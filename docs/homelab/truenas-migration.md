@@ -1,6 +1,6 @@
 # TrueNAS consolidation: completed cutover and remaining gates
 
-**Status November 27, 2026:** Hardware installation and pool import are complete. The original dataset and snapshots remain authoritative; never delete the backing dataset. Independent USB backup covers selected files; checksum validation and first nightly completion were owner-reported successful. Live checks confirmed both pools online and snapshot schedules successful. Sample restore, appdata, database backups and application migration remain pending. The historical cutover steps below are recovery context, not instructions to repeat. See storage-backups.md and architecture.md for current policy.
+**Status November 27, 2026:** Hardware installation and pool import are complete. The original dataset and snapshots remain authoritative; never delete the backing dataset. Independent USB backup covers selected files; checksum validation and first nightly completion were owner-reported successful. Live checks confirmed both pools online and snapshot schedules successful. The restricted Semaphore sample restore and selected legacy checksum verification passed (tasks 2 and 4). Recursive appdata snapshots are active; independent appdata and logical database backups, security negative tests and remaining application migration are pending. The historical cutover steps below are recovery context, not instructions to repeat. See storage-backups.md and architecture.md for current policy.
 
 This is an operating playbook, not authorization to execute changes. Query live state at each gate. Keep secrets, private IPs, and MAC addresses out of this public repository.
 
@@ -26,7 +26,7 @@ This is an operating playbook, not authorization to execute changes. Query live 
   Compose configuration, persistent host paths, and port conflicts.
 - TrueNAS exposes catalog app inventory, installation, configuration, status,
   updates, and lifecycle management through its versioned JSON-RPC WebSocket
-  API. These are **future HomeLab MCP capabilities**, not presently deployed.
+  API. Read-only inventory, scoped dataset/snapshot and selected lifecycle operations, and fixed create-only Semaphore deployment are now implemented; generalized Git-backed app updates remain future work.
   Begin with read-only app inventory, available updates and job outcomes.
   Make app install/update/start/stop narrowly scoped controlled writes, gated
   on approved Git changes and preflight checks. No generic shell or full-admin
