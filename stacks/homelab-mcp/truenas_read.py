@@ -1,5 +1,6 @@
-"""Narrow read-only TrueNAS 25.10 JSON-RPC 2.0 integration."""
+"""Scoped TrueNAS 25.10 JSON-RPC 2.0 integration."""
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import math
 import re
@@ -10,6 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
+from websockets.protocol import State
 
 
 class _NoRedirectConnect(connect):
@@ -80,30 +82,103 @@ async def _exchange(ws, request_id, method, params):
     raise RuntimeError("TrueNAS response limit exceeded.")
 
 
-async def _read(method, params=None):
-    if method not in _READ_METHODS:
-        raise ValueError("TrueNAS RPC method is not allowed.")
-    uri, username, key = _endpoint()
-    try:
-        async with asyncio.timeout(30):
-            async with _NoRedirectConnect(
+
+# One persistent socket per credential class. Serialize exchanges on each
+# socket; a shared login gate prevents bursts of reconnections across both.
+# No automatic replay of any RPC, including writes with ambiguous outcomes.
+class _AuthGate:
+    def __init__(self):
+        self.lock = asyncio.Lock()
+        self.next_login = 0.0
+        self.blocked_until = 0.0
+
+    async def login(self, credentials):
+        async with self.lock:
+            now = time.monotonic()
+            if now < self.blocked_until:
+                raise RuntimeError("TrueNAS authentication cooling down; inspect credentials and retry later.")
+            if self.next_login > now:
+                await asyncio.sleep(self.next_login - now)
+            self.next_login = time.monotonic() + 4
+            uri, username, key = credentials
+            ws = await _NoRedirectConnect(
                 uri, ssl=ssl.create_default_context(), proxy=None,
                 open_timeout=8, close_timeout=2, max_size=8 * 1024 * 1024,
-            ) as ws:
+                ping_interval=20, ping_timeout=20)
+            try:
                 auth = await _exchange(ws, 1, "auth.login_ex", [{
                     "mechanism": "API_KEY_PLAIN", "username": username,
                     "api_key": key, "login_options": {"user_info": False},
                 }])
                 if not isinstance(auth, dict) or auth.get("response_type") != "SUCCESS":
                     raise RuntimeError("TrueNAS API key authentication failed.")
-                result = await _exchange(ws, 2, method, params or [])
+                return ws
+            except BaseException:
+                # Upstream documents a ten-minute lockout; respect it even
+                # when a sanitized auth failure cannot identify the cause.
+                self.blocked_until = time.monotonic() + 600
+                await ws.close()
+                raise
+
+
+class _Session:
+    def __init__(self, gate):
+        self.gate = gate
+        self.lock = asyncio.Lock()
+        self.ws = None
+        self.credentials = None
+        self.opened = 0.0
+        self.request_id = 1
+
+    async def close(self):
+        ws, self.ws = self.ws, None
+        self.credentials = None
+        if ws is not None:
+            await ws.close()
+
+    async def call(self, method, params):
+        self.request_id += 1
+        return await _exchange(self.ws, self.request_id, method, params)
+
+    @asynccontextmanager
+    async def use(self, credentials):
+        async with self.lock:
+            try:
+                if (self.ws is None or self.ws.state is not State.OPEN or
+                        credentials != self.credentials or time.monotonic() - self.opened >= 3600):
+                    await self.close()
+                    self.ws = await self.gate.login(credentials)
+                    self.credentials = credentials
+                    self.opened = time.monotonic()
+                    self.request_id = 1
+                yield self
+            except BaseException:
+                # Cancellation, transport failure, malformed response or RPC
+                # error: discard the socket rather than consume stale replies.
+                await self.close()
+                raise
+
+
+_AUTH_GATE = _AuthGate()
+_READ_SESSION = _Session(_AUTH_GATE)
+_ADMIN_SESSION = _Session(_AUTH_GATE)
+
+
+async def _read(method, params=None):
+    if method not in _READ_METHODS:
+        raise ValueError("TrueNAS RPC method is not allowed.")
+    credentials = _endpoint()
+    try:
+        async with asyncio.timeout(30):
+            async with _READ_SESSION.use(credentials) as session:
+                result = await session.call(method, params or [])
                 # Discovery starts a read-only scan job, not an import. Poll only
                 # the job we just initiated, on the same authenticated session.
                 if method == "pool.import_find":
                     if type(result) is not int or result < 1:
                         raise RuntimeError("Unexpected pool discovery job ID.")
-                    for request_id in range(3, 24):
-                        jobs = await _exchange(ws, request_id, "core.get_jobs",
+                    for _ in range(21):
+                        jobs = await session.call("core.get_jobs",
                             [[["id", "=", result]], {"limit": 1}])
                         if isinstance(jobs, list) and jobs:
                             job = jobs[0]
@@ -181,26 +256,17 @@ async def _exact_dataset(name, required=True):
 async def _admin_rpc(method, params):
     if method not in _WRITE_METHODS:
         raise ValueError("TrueNAS write method is not allowed.")
-    uri, username, key = _write_credentials()
+    credentials = _write_credentials()
     try:
         async with asyncio.timeout(35):
-            async with _NoRedirectConnect(
-                uri, ssl=ssl.create_default_context(), proxy=None,
-                open_timeout=8, close_timeout=2, max_size=8 * 1024 * 1024,
-            ) as ws:
-                auth = await _exchange(ws, 1, "auth.login_ex", [{
-                    "mechanism": "API_KEY_PLAIN", "username": username,
-                    "api_key": key, "login_options": {"user_info": False},
-                }])
-                if not isinstance(auth, dict) or auth.get("response_type") != "SUCCESS":
-                    raise RuntimeError("TrueNAS administration authentication failed.")
-                result = await _exchange(ws, 2, method, params)
+            async with _ADMIN_SESSION.use(credentials) as session:
+                result = await session.call(method, params)
                 if method not in ("app.start", "app.stop"):
                     return result
                 if type(result) is not int or result < 1:
                     raise RuntimeError("Unexpected application job identifier; verify state before retry.")
-                for request_id in range(3, 20):
-                    rows = await _exchange(ws, request_id, "core.get_jobs",
+                for _ in range(17):
+                    rows = await session.call("core.get_jobs",
                         [[["id", "=", result]], {"limit": 1}])
                     if isinstance(rows, list) and len(rows) == 1:
                         job = rows[0]
