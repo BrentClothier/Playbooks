@@ -9,7 +9,7 @@
 5. Never commit secrets to this repository.
 6. Do not treat a successful API response as proof of an asynchronous deployment; verify final state.
 7. Treat Git/IaC as the target source of truth for reproducible infrastructure.
-8. Preserve the NFS storage LXC as the current authoritative user-data tier; infrastructure reproducibility does not replace data backup.
+8. Preserve the former NFS LXC backing dataset on TrueNAS as the authoritative user-data tier; infrastructure reproducibility does not replace data backup.
 9. Treat "running" as process or guest state, not proof that an application is healthy; verify the service-level health signal that matters.
 10. Treat backup configuration and successful backup/restore evidence separately.
 11. Do not delete an unknown guest merely because its purpose or current state is unclear.
@@ -41,7 +41,7 @@ GitHub definitions -> Semaphore/Codex validation -> controlled deployment
                                       +-> live-state verification
 ```
 
-Manual Portainer stacks should gradually become Git-backed where appropriate. Secrets and mutable application data must stay outside the public repository.
+Replace legacy Portainer stacks with reproducible TrueNAS Apps incrementally. Secrets and mutable application data must stay outside the public repository.
 
 ## Confirmed intentional service exceptions (November 21, 2026)
 
@@ -56,13 +56,17 @@ Manual Portainer stacks should gradually become Git-backed where appropriate. Se
 - Paperless LXC 103 has been retired and removed from Proxmox. Stale Portainer endpoint/stack metadata may remain until it is deleted from Portainer.
 - Orphaned Portainer Compose records may be removed through `portainer_delete_orphaned_stack` only after an exact-name confirmation and a successful collision-free preflight on a live cleanup environment. The action is version-locked to tested Portainer 2.45.x behavior and is not a general live-stack delete.
 - Some workloads are historical/manual Portainer stacks rather than Git-backed stacks.
-- Redis/Valkey on Family Archive has reported the common Linux `vm.overcommit_memory` warning. This is worth fixing on the Docker host when that project resumes.
-- The Humboldt data platform is provisioned and operational; current follow-up work is focused on meeting-date semantics and GIS geometry/data validation.
-- The NFS storage LXC contains the real/authoritative data and currently has no independent backup due to storage-capacity limits.
-- PBS is intended to be retired eventually, but only after infrastructure is reproducible and irreplaceable NFS data has an independent backup path.
+- Family Archive was deleted by the owner; do not recreate it without request.
+- Humboldt will be rebuilt as a native Compose application from public sources; old database migration is not required.
+- The imported TrueNAS dataset is authoritative; selected files have independent backup, but full media and consistent database coverage remain incomplete.
+- Old PBS backup disk was repurposed by explicit owner decision; verify remaining dependencies before removing legacy services.
 - The Home Assistant VMs are intentionally stopped pending a later rebuild; their stopped state is not a cleanup signal.
 - Older guests with IDs `109` and `111` have not been confirmed stale. Preserve them until ownership, data value, and purpose are established.
-- The `proxmox1`/`proxmox2` to TrueNAS consolidation is provisional. No purchase, migration, or service move is approved by the planning record alone.
+- Hardware and pool import are complete; remaining work is application migration, protection and control-plane consolidation.
+
+## Current monitoring and migration priorities
+
+Health Watch runs every six hours, read-only; notify on meaningful new/worsening or resolved exceptions, consolidate nonurgent warnings daily, suppress routine healthy reports, recognize intentional outages, and report monitoring failures. No automatic remediation. Prefer native reporting before adding Prometheus/Grafana. Next: sample restore, appdata, fresh Semaphore, native app backups, control-plane migration, entertainment apps, Humboldt and Home Assistant. Check live dependencies before retiring hosts.
 
 ## Change-risk model
 
