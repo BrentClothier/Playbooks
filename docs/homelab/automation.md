@@ -343,3 +343,30 @@ and negative tests. No generic shell or root login. The scope is not a
 sandbox for arbitrary Git code: trust only reviewed project templates and
 restrict editors. Live runner installation, restore, independent appdata
 backup and database protection remain unverified.
+
+
+### Restricted backup runner: live verification (November 27, 2026)
+
+PR #27 merged at 4044e87243d389db43710ed40b216a463e724752. The owner
+installed the reviewed root-owned helper and private config, two separate
+forced-command SSH keys and exact sudo rules, then deployed the dedicated
+project scope (1:*) and disabled bootstrap. Template preparation created
+verify template 2 and restore template 3 in project 1. Task 2 completed at
+14:53 PST: a 53,805-byte temporary restored sample matched the backup and
+current source. Task 3 failed preflight/execution; root cause not confirmed.
+Retry task 4 succeeded at 15:25 PST after 17m13s: both legacy backup groups
+returned rsync exit 0 and zero regular files needing transfer. The MCP
+read back the task status and sanitized results independently. No source
+or backup data was modified. These are dated observations, not guarantees
+of future execution or complete recovery.
+
+Owner-reported local sudo and forced-command restore tests succeeded. SSH
+forwarding and PTY denial, effective password policy and unrelated sudo
+negative tests still need explicit evidence; do not claim full security
+validation. Do not widen the existing SSH or sudo scope. Git main and
+project editors are trusted; the project wildcard is not a sandbox.
+
+Next: native independent appdata replication with private destination,
+consistent Semaphore PostgreSQL dump and isolated restore test, recovery
+of the matching encryption/configuration secrets, then Git-backed app
+update and migration. Do not retire old management infrastructure yet.
