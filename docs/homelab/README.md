@@ -42,12 +42,13 @@ Use logical hostnames and roles instead.
 
 ChatGPT reaches the HomeLab through an outbound-only secure MCP tunnel. The MCP service exposes narrowly scoped integrations:
 
-- **Proxmox:** read-only infrastructure visibility.
+- **TrueNAS:** primary storage and application host; bounded read-only diagnostics deployed, staged administrative capabilities planned.
+- **Proxmox:** transitional read-only infrastructure visibility.
 - **Semaphore:** controlled execution of existing automation templates.
 - **Portainer:** Docker visibility, selected container actions, and guarded Git-backed stack redeploys.
 - **UniFi:** network visibility and retained system-event telemetry.
 
-Semaphore is the preferred write/automation layer. Arbitrary shell or SSH execution is intentionally not exposed through MCP.
+Use native TrueNAS APIs for future narrow administrative operations and Semaphore for approved repeatable automation. Current TrueNAS MCP actions are read-only. Arbitrary shell or SSH execution is intentionally not exposed through MCP.
 
 See [architecture.md](architecture.md), [automation.md](automation.md), and [operations.md](operations.md).
 
@@ -68,4 +69,4 @@ See [architecture.md](architecture.md), [automation.md](automation.md), and [ope
 
 Prefer small updates alongside infrastructure changes. Where practical, automation may refresh factual inventory, but generated data must remain public-safe and must never include secrets.
 
-Last structured review: 2026-10-17.
+Last structured review: 2026-11-27.
