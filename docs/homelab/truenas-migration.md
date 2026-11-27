@@ -1,4 +1,6 @@
-# Proxmox to TrueNAS cutover: migration safety checklist
+# TrueNAS consolidation: completed cutover and remaining gates
+
+**Status November 27, 2026:** Hardware installation and pool import are complete. The original dataset and snapshots remain authoritative; never delete the backing dataset. Independent USB backup covers selected files; checksum validation and first nightly completion were owner-reported successful. Live checks confirmed both pools online and snapshot schedules successful. Sample restore, appdata, database backups and application migration remain pending. The historical cutover steps below are recovery context, not instructions to repeat. See storage-backups.md and architecture.md for current policy.
 
 This is an operating playbook, not authorization to execute changes. Query live state at each gate. Keep secrets, private IPs, and MAC addresses out of this public repository.
 
@@ -37,7 +39,7 @@ This is an operating playbook, not authorization to execute changes. Query live 
   independent management path during the migration so a TrueNAS app outage
   cannot eliminate recovery access.
 
-## Gates before modifying Proxmox2 hardware
+## Historical pre-cutover gates (completed hardware migration)
 
 1. Inventory live guests, source and destination volume IDs, container storage mounts, NFS clients, DNS/proxy dependencies, and rollbacks.
 2. Confirm admin-vm01, Authentik, HomeLab MCP, secure tunnel, and reverse proxy all work independently of Proxmox2. A running VM alone is not proof.
@@ -45,7 +47,7 @@ This is an operating playbook, not authorization to execute changes. Query live 
 4. Check backup warnings, job exclusions, and per-workload restore results. LXC 105 was excluded from the cluster backup job in the prior inspection; verify the current state.
 5. Save `zpool status -v`, ZFS dataset and snapshot listings, mount properties, user/group ownership and NFS export definitions. The MCP Proxmox tools cannot replace native filesystem inspection.
 
-## Cutover steps
+## Historical cutover steps (do not repeat)
 
 1. Assemble and test the new server, then install TrueNAS to the boot NVMe **with the four data SSDs disconnected**.
 2. Stop all writers to the existing pool, take consistent final snapshots and independent backups, then export the ZFS pool cleanly from Proxmox2.
