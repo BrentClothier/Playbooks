@@ -56,6 +56,7 @@ _READ_METHODS = frozenset({
     "replication.query", "cloudsync.query", "cloud_backup.query",
     "rsynctask.query", "reporting.get_data", "pool.import_find",
     "update.status", "vm.status", "nfs.client_count",
+    "cronjob.query", "filesystem.stat", "app.container_console_choices",
 })
 
 
@@ -258,6 +259,64 @@ async def _task_group(method, limit, offset):
                 "items": None}
 
 
+def _cron_projection(row):
+    # Cron commands and free-form descriptions can contain secrets.
+    out = _fields(row, ("id", "enabled", "stdout", "stderr"))
+    if isinstance(row.get("schedule"), dict):
+        out["schedule"] = _fields(row["schedule"], _SCHEDULE)
+    return out
+
+
+async def _dataset_root_stat(dataset):
+    # Only an exact inventoried mounted ZFS dataset root, never an arbitrary path.
+    if not isinstance(dataset, str) or len(dataset) > 240 or not re.fullmatch(
+            r"[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*", dataset):
+        raise ValueError("Invalid dataset identifier.")
+    if any(part in (".", "..") for part in dataset.split("/")):
+        raise ValueError("Invalid dataset identifier.")
+    rows = await _read("pool.dataset.query", [[["id", "=", dataset]],
+        {"limit": 1, "extra": {"flat": True, "retrieve_user_props": False}}])
+    path = "/mnt/" + dataset
+    if (not isinstance(rows, list) or len(rows) != 1 or
+            not isinstance(rows[0], dict) or rows[0].get("id") != dataset or
+            rows[0].get("type") != "FILESYSTEM" or rows[0].get("locked") is True or
+            rows[0].get("mountpoint") != path):
+        raise ValueError("Dataset is not an inventoried accessible filesystem at its standard mountpoint.")
+    stat = await _read("filesystem.stat", [path])
+    if (not isinstance(stat, dict) or stat.get("realpath") != path or
+            stat.get("type") != "DIRECTORY" or stat.get("is_mountpoint") is not True):
+        raise RuntimeError("Dataset mountpoint could not be verified.")
+    return {"dataset": dataset, "stat": _fields(stat, (
+        "type", "uid", "gid", "mode", "acl", "is_mountpoint", "mount_id")),
+        "coverage": "Dataset root only; not child file ownership, ACL entries or client access."}
+
+
+async def _app_containers(app_name, limit=50):
+    if not isinstance(app_name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", app_name):
+        raise ValueError("Invalid application name.")
+    rows = await _read("app.query", [[["id", "=", app_name]],
+        {"limit": 1, "extra": {"retrieve_config": False, "include_app_schema": False}}])
+    if (not isinstance(rows, list) or len(rows) != 1 or
+            not isinstance(rows[0], dict) or rows[0].get("id") != app_name):
+        raise ValueError("Application not found in live inventory.")
+    containers = await _read("app.container_console_choices", [app_name])
+    if not isinstance(containers, dict):
+        raise RuntimeError("Unexpected application container response.")
+    return {"app": app_name, **_rows(list(containers.values()),
+        ("id", "service_name", "image", "state"), limit),
+        "coverage": "Container inventory and state, not health checks, logs or resource statistics."}
+
+
+def _latest_sample(sample, legend):
+    if isinstance(sample, list):
+        if (not isinstance(legend, list) or len(sample) != len(legend) or
+                len(legend) > 64 or any(not isinstance(k, str) for k in legend) or
+                len(set(legend)) != len(legend)):
+            return None
+        sample = dict(zip(legend, sample))
+    return _numeric_map(sample) or None
+
+
 def _numeric_map(row):
     if not isinstance(row, dict):
         return {}
@@ -289,7 +348,7 @@ async def _metric_graphs(graphs, hours):
         data = row.get("data")
         if isinstance(data, list):
             out["sample_count"] = len(data)
-            out["latest_sample"] = _numeric_map(data[-1]) if data else None
+            out["latest_sample"] = _latest_sample(data[-1], row.get("legend")) if data else None
         items.append(out)
     return {"hours_requested": hours, "items": items,
             "coverage": "Reported min/mean/max and latest returned sample; empty or null is unknown."}
@@ -504,3 +563,29 @@ def register(mcp):
         if type(result) is not int or result < 0:
             raise RuntimeError("Unexpected NFS client count.")
         return {"client_count": result}
+
+    @mcp.tool
+    async def truenas_cron_jobs(limit: int = 50, offset: int = 0):
+        """Read cron schedule metadata without shell commands, descriptions or credentials. Does not run a job."""
+        result = await _query("cronjob.query", (), limit, offset, transform=_cron_projection)
+        result["coverage"] = "Schedule configuration only; not execution history or proof of successful backups."
+        return result
+
+    @mcp.tool
+    async def truenas_cron_history(limit: int = 50, offset: int = 0):
+        """Read session-visible cronjob.run job metadata. Does not read system journal or prove scheduled execution."""
+        result = await _query("core.get_jobs",
+            ("id", "method", "state", "time_started", "time_finished"), limit, offset,
+            filters=[["method", "=", "cronjob.run"]])
+        result["coverage"] = "Session-visible middleware jobs only; ordinary cron execution may not appear."
+        return result
+
+    @mcp.tool
+    async def truenas_dataset_root_stat(dataset: str):
+        """Inspect exact inventoried dataset root mountpoint, numeric owner, mode and ACL presence. No arbitrary paths or file contents."""
+        return await _dataset_root_stat(dataset)
+
+    @mcp.tool
+    async def truenas_app_containers(app_name: str, limit: int = 50):
+        """Read service/container image and state for one installed application; no console or shell access."""
+        return await _app_containers(app_name, limit)
