@@ -1,80 +1,16 @@
 # Logical Inventory
 
-This is a logical inventory, not a real-time monitoring dashboard. Runtime status should be queried from the relevant system.
+Reviewed November 27, 2026; not live telemetry.
 
-## Proxmox nodes
-
-| Node | Role |
+| Role | Platform / lifecycle |
 | --- | --- |
-| `proxmox1` | Small adjacent node providing general Proxmox capacity |
-| `proxmox2` | Bottom 3U Core i5 chassis; primary application/control workloads and major storage attachment |
-| `proxmox3` | Retained small-form-factor gaming system; application workloads, workstation VM, automation, and object storage |
+| Primary storage and future apps | Bare-metal TrueNAS, former proxmox2; pool imported intact |
+| Legacy compute | Proxmox1 and Proxmox3; verify live guests and quorum |
+| Management | Existing admin Docker host, HomeLab MCP, outbound tunnel, Semaphore and Portainer; retain until replacement verified |
+| Network | UniFi Network/Protect; Tailscale native TrueNAS app, Nginx Proxy Manager retained for local access |
+| Backup | Independent USB SSD on TrueNAS; selected files and app data |
+| Future gaming | Proxmox3 eventually bare-metal Linux Mint, normally off |
 
-All three nodes were online at the 2026-09-29 structured review.
+## Application migration
 
-## Important virtualized workloads
-
-### proxmox2
-
-- `admin-vm01` - administrative Docker host; HomeLab MCP runs here.
-- `docker-vm01` - general Docker host.
-- `NFS` - network file storage.
-- `Nginx` - reverse-proxy workload.
-- `Portainer` - Portainer server workload.
-- `MealieAudioBooks` - application host.
-- `audiobookshelf` - application host.
-- `Home-Assistant` - intentionally stopped pending a later rebuild.
-- `ha-vm01` - intentionally stopped pending a later rebuild.
-- `ubuntu-2504-cloud-uefi-prep` - VM template used for provisioning.
-
-### proxmox3
-
-- `Servarr` - media-related services.
-- `Linux-Mint` - high-resource desktop/workstation VM.
-- `Ansible` - automation workload.
-- `MinIO` - object storage.
-
-## Portainer-managed stacks
-
-Current important stacks include:
-
-- `nginx`
-- `emulator_js`
-- `adiobookshelf_neo`
-- `mealie_neo`
-- `romm`
-- `qbittorrent`
-- `plex`
-- `ansible`
-- `minio`
-- `authentik`
-- `romm-server`
-- `family-archive`
-- `homelab-mcp`
-
-Git-backed stacks currently include `authentik`, `romm-server`, and `family-archive`.
-
-`homelab-mcp` is currently editor-managed in Portainer even though its Compose source lives in Git. It must not self-redeploy through its own MCP action.
-
-## Authentication
-
-Authentik is the central self-hosted identity component for services that support OIDC.
-
-## Network
-
-UniFi Network provides gateway/switch/AP management and exports retained system events to HomeLab MCP for troubleshooting and health analysis.
-
-## Inventory update policy
-
-Do not add secret values or exact attack-surface details to this file. Prefer logical names and roles.
-
-Do not infer that an unknown or stopped guest is stale. In particular, older
-guests with IDs `109` and `111` have not been confirmed as cleanup candidates;
-identify ownership and purpose before proposing any lifecycle action.
-
-
-## Retired workloads
-
-- `paperless-ngx` - LXC 103 was retired and removed from Proxmox on 2026-09-29.
-  Any stale Portainer endpoint/stack metadata should be removed separately from
-  Portainer; no active Paperless workload remains in Proxmox.
+Fresh Semaphore + PostgreSQL first, then management services, Plex (Intel Quick Sync), Audiobookshelf, Servarr, RomM/MariaDB, Nginx Proxy Manager, MinIO if needed. Rebuild Humboldt and Home Assistant OS VM later. Tailscale was the sole native app in the November 27 live check; dedicated appdata hierarchy was absent. Verify current inventory rather than assume this persists. Authentik retention depends on actual SSO dependencies. Mealie intentionally stopped, Family Archive and Paperless retired; do not recreate without request. Unknown guest IDs 109/111 are not confirmed cleanup candidates. Never delete the old NFS backing dataset. No self-redeployment of HomeLab MCP.
