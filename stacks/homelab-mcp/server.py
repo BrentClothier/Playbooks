@@ -1972,8 +1972,8 @@ async def semaphore_setup_humboldt_automation() -> Any:
     It intentionally does not expose generic project/template administration.
     """
     projects = await semaphore_get("/projects")
-    if not isinstance(projects, list):
-        raise RuntimeError("Semaphore project list was not returned as a list.")
+    if not isinstance(projects, list) or not any(isinstance(p, dict) and p.get("id") == 1 and p.get("name") == "Clothier HomeLab" for p in projects):
+        raise RuntimeError("Legacy Humboldt bootstrap requires the original Clothier HomeLab project; not valid on the fresh native instance.")
 
     project_name = "Humboldt Government Intelligence"
     humboldt_project = next(
@@ -3251,6 +3251,9 @@ async def unifi_event_summary(hours: int = 24) -> Any:
 # Register the optional read-only TrueNAS integration.
 from truenas_read import register as register_truenas
 register_truenas(mcp)
+
+from semaphore_bootstrap import register as register_semaphore_bootstrap
+register_semaphore_bootstrap(mcp)
 
 
 if __name__ == "__main__":

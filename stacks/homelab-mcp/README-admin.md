@@ -61,3 +61,24 @@ Create only after CI, publication, manual deployment and Action control
 refresh. Before production use, verify functional login and consistent
 database backup and restore. The legacy Semaphore remains available until
 the replacement is verified.
+
+
+## Native Semaphore bootstrap
+
+Enable SEMAPHORE_BOOTSTRAP_ENABLED=true privately and pass it through the
+MCP Compose environment. Require verified HTTPS on the private Tailscale
+Serve port 8443, a working token, and an empty SEMAPHORE_ALLOWED_TEMPLATES.
+Call semaphore_bootstrap_truenas with confirmation
+bootstrap:homelab-truenas-operations only on the new instance. It creates a
+dedicated project, public HTTPS Git repository, no-auth key, empty variable
+group and a Python smoke template. It re-reads resources, reuses exact
+matches, rejects conflicts and does not update existing resources or run
+tasks. Existing unrelated projects cause refusal. After bootstrap turn the
+flag off, verify template settings and explicitly authorize only its exact
+project/template pair before running. No host SSH key, host inventory,
+schedules, credentials or backup templates are created. Repository main is
+mutable; verify reviewed smoke source before execution, and use stronger
+revision controls for future privileged tasks. The host backup helper must
+run in an independently reviewed restricted execution context, not via
+arbitrary root SSH or a Docker socket. Legacy Humboldt bootstrap is rejected
+unless the original project ID and name match.
