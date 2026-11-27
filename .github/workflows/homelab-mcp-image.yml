@@ -29,8 +29,8 @@ jobs:
       - name: Test TrueNAS read-only client
         working-directory: stacks/homelab-mcp
         run: |
-          python -m py_compile server.py truenas_read.py semaphore_bootstrap.py
-          python -m unittest -v test_truenas_read test_semaphore_bootstrap
+          python -m py_compile server.py truenas_read.py semaphore_bootstrap.py semaphore_policy.py ../../scripts/truenas/semaphore_backup.py
+          python -m unittest -v test_truenas_read test_semaphore_bootstrap test_semaphore_policy
 
   build-and-push:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

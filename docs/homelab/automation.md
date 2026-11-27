@@ -314,3 +314,32 @@ PR #23 passed CI and merged at ee56191889b659d2e5ae80399c2fad0b65e8b4a8. Separat
 Semaphore Compose is merged on main via PR #24, pinned to f6bb37ba1eda27d2fa700bfabcd4ddc52e61f32a. PR #25 passed both CI workflows and merged at 1286a91ea5f64cf3bb43ba52a30d7b5dc4fd5797. It adds a default-disabled create-only Semaphore action, fixed Git source/blob verification, private runtime secrets, mounted/empty dataset and recursive snapshot preflight, a persistent attempt fence, and bounded deployment status. No arbitrary YAML, app updates, full drift comparison or deletion. Image publication, manual redeployment, action refresh, private runtime configuration and live app creation remain distinct gates. The owner created the hourly recursive appdata snapshot task, retention 14 days, verified enabled; initial run was pending at inspection. See stacks/homelab-mcp/README-admin.md and stacks/semaphore-truenas/README.md. Do not retire the old Semaphore until replacement login, representative safe task, backup/restore and MCP access are verified.
 
 On November 27 the owner configured private deployment settings, redeployed and refreshed actions. The fixed Git-backed Semaphore creation passed preflight and TrueNAS job 3262 returned SUCCESS. The native custom app reported RUNNING, with both Semaphore v2.20.23 and PostgreSQL 16.16-trixie containers running and matching expected image tags. This verifies initial deployment, not functional login, full Compose equivalence, database backup/restore or migration of old automation. The old control plane remains unchanged. Configure trusted HTTPS, test login and create a dedicated API token privately before reconnecting MCP; retain existing access until the new automation path is validated.
+
+
+### Native Semaphore bootstrap and restricted runner (November 27, 2026)
+
+PR #26 passed all validation and published the image from merge
+b06e0a66c80f6ae0b41abe11f02ec988df1e6725. Owner deployed and refreshed actions.
+Bootstrap created the native HomeLab project, public Git repository, no-auth
+key, empty variable group and smoke template; repeat invocation reused all
+five resources. After disabling bootstrap and authorizing the exact template,
+task 1 succeeded and emitted HOMELAB_SEMAPHORE_RUNNER_OK from the reviewed
+merge revision. This verifies Git checkout, API execution and log retrieval,
+not host execution or backup recovery.
+
+Owner selected Tailscale Serve as the preferred private HTTPS access layer,
+and intends to retain Authentik for centralized identity/SSO when sharing
+selected services. Keep administrators separate from shared service users;
+verify restrictive network grants and app access policies before sharing.
+Do not retire existing proxies or identity services until dependencies are
+audited. Native Semaphore HTTPS and MCP connectivity were verified; the
+management VM required its own Tailscale client.
+
+Next increment proposes native project:* scope with live name and fixed-task
+settings checks, and create-only backup templates. See
+scripts/truenas/README-backup-runner.md for the owner-controlled restricted
+SSH keys, exact sudo commands, private variable groups, pinned host identity
+and negative tests. No generic shell or root login. The scope is not a
+sandbox for arbitrary Git code: trust only reviewed project templates and
+restrict editors. Live runner installation, restore, independent appdata
+backup and database protection remain unverified.

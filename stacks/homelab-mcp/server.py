@@ -313,39 +313,20 @@ def semaphore_ready() -> bool:
     return bool(SEMAPHORE_URL and SEMAPHORE_API_TOKEN)
 
 
-def semaphore_allow_all_templates() -> bool:
-    return SEMAPHORE_ALLOWED_TEMPLATES_RAW.strip() == "*"
+from semaphore_policy import parse as parse_semaphore_scope, authorize as authorize_semaphore
+from semaphore_policy import verify_project as verify_semaphore_project, template_safe as semaphore_template_safe
 
 
-def semaphore_allowed_template_pairs() -> set[tuple[int, int]]:
-    """
-    Parse SEMAPHORE_ALLOWED_TEMPLATES.
+def semaphore_allow_all_templates():
+    return parse_semaphore_scope(SEMAPHORE_ALLOWED_TEMPLATES_RAW)[0]
 
-    Use "*" to allow every Semaphore template, including templates created
-    in the future.
 
-    Otherwise use comma-separated project_id:template_id pairs, for example:
-    1:2,1:3,1:4
-    """
-    allowed: set[tuple[int, int]] = set()
-    raw = SEMAPHORE_ALLOWED_TEMPLATES_RAW.strip()
-    if not raw or raw == "*":
-        return allowed
+def semaphore_allowed_template_pairs():
+    return parse_semaphore_scope(SEMAPHORE_ALLOWED_TEMPLATES_RAW)[1]
 
-    for item in raw.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        try:
-            project_text, template_text = item.split(":", 1)
-            allowed.add((int(project_text), int(template_text)))
-        except (ValueError, TypeError) as exc:
-            raise RuntimeError(
-                "Invalid SEMAPHORE_ALLOWED_TEMPLATES value. "
-                "Use '*' or comma-separated project_id:template_id pairs."
-            ) from exc
 
-    return allowed
+def semaphore_scoped_projects():
+    return parse_semaphore_scope(SEMAPHORE_ALLOWED_TEMPLATES_RAW)[2]
 
 
 async def semaphore_get(path: str, params: dict[str, Any] | None = None) -> Any:
@@ -1293,6 +1274,7 @@ async def health_check(request):
                 if (
                     semaphore_allow_all_templates()
                     or semaphore_allowed_template_pairs()
+                or semaphore_scoped_projects()
                 )
                 else "read-only"
             ),
@@ -1300,7 +1282,7 @@ async def health_check(request):
             "semaphore_allow_all_templates": semaphore_allow_all_templates(),
             "semaphore_allowed_template_count": (
                 None
-                if semaphore_allow_all_templates()
+                if semaphore_allow_all_templates() or semaphore_scoped_projects()
                 else len(semaphore_allowed_template_pairs())
             ),
             "portainer_configured": portainer_ready(),
@@ -1338,6 +1320,7 @@ async def homelab_mcp_info() -> dict[str, Any]:
             if (
                 semaphore_allow_all_templates()
                 or semaphore_allowed_template_pairs()
+                or semaphore_scoped_projects()
             )
             else "read-only"
         ),
@@ -1350,7 +1333,7 @@ async def homelab_mcp_info() -> dict[str, Any]:
         "semaphore_allow_all_templates": semaphore_allow_all_templates(),
         "semaphore_allowed_template_count": (
             None
-            if semaphore_allow_all_templates()
+            if semaphore_allow_all_templates() or semaphore_scoped_projects()
             else len(semaphore_allowed_template_pairs())
         ),
         "portainer_configured": portainer_ready(),
@@ -2102,79 +2085,34 @@ async def semaphore_setup_humboldt_automation() -> Any:
 
 @mcp.tool
 async def semaphore_allowed_templates() -> Any:
-    """
-    List Semaphore templates that this MCP is permitted to execute.
-
-    Execution is denied unless a project/template pair appears in the
-    SEMAPHORE_ALLOWED_TEMPLATES environment variable.
-    """
-    if semaphore_allow_all_templates():
-        projects = await semaphore_get("/projects")
-        results = []
-        if not isinstance(projects, list):
-            return projects
-
-        for project in projects:
-            project_id = project.get("id")
-            if project_id is None:
+    """List executable templates under exact pairs or native project:* scopes."""
+    all_allowed, pairs, scoped = parse_semaphore_scope(SEMAPHORE_ALLOWED_TEMPLATES_RAW)
+    results = {}
+    projects = set(scoped)
+    if all_allowed:
+        rows = await semaphore_get("/projects")
+        projects.update(p["id"] for p in (rows or []) if isinstance(p, dict) and type(p.get("id")) is int)
+    for pid in sorted(projects):
+        if pid in scoped:
+            await verify_semaphore_project(semaphore_get, pid, SEMAPHORE_URL, SEMAPHORE_VERIFY_SSL)
+        rows = await semaphore_get(f"/project/{pid}/templates", params={"sort": "name", "order": "asc"})
+        for row in rows or []:
+            tid = row.get("id")
+            if type(tid) is not int:
                 continue
-            templates = await semaphore_get(
-                f"/project/{project_id}/templates",
-                params={"sort": "name", "order": "asc"},
-            )
-            if not isinstance(templates, list):
-                continue
-            for template in templates:
-                results.append(
-                    {
-                        "project_id": project_id,
-                        "template_id": template.get("id"),
-                        "name": template.get("name"),
-                        "playbook": template.get("playbook"),
-                        "app": template.get("app"),
-                    }
-                )
-        return results
-
-    allowed = sorted(semaphore_allowed_template_pairs())
-    results = []
-
-    for project_id, template_id in allowed:
-        try:
-            template = await semaphore_get(
-                f"/project/{project_id}/templates/{template_id}"
-            )
-            results.append(
-                {
-                    "project_id": project_id,
-                    "template_id": template_id,
-                    "name": (
-                        template.get("name")
-                        if isinstance(template, dict)
-                        else None
-                    ),
-                    "playbook": (
-                        template.get("playbook")
-                        if isinstance(template, dict)
-                        else None
-                    ),
-                    "app": (
-                        template.get("app")
-                        if isinstance(template, dict)
-                        else None
-                    ),
-                }
-            )
-        except Exception as exc:
-            results.append(
-                {
-                    "project_id": project_id,
-                    "template_id": template_id,
-                    "error": str(exc),
-                }
-            )
-
-    return results
+            if pid in scoped:
+                try:
+                    semaphore_template_safe(row, pid, tid)
+                except PermissionError:
+                    continue
+            results[(pid, tid)] = row
+    for pid, tid in sorted(pairs):
+        if (pid, tid) not in results:
+            results[(pid, tid)] = await authorize_semaphore(
+                semaphore_get, SEMAPHORE_ALLOWED_TEMPLATES_RAW, pid, tid, SEMAPHORE_URL, SEMAPHORE_VERIFY_SSL)
+    return [{"project_id": pid, "template_id": tid, "name": row.get("name"),
+             "playbook": row.get("playbook"), "app": row.get("app")}
+            for (pid, tid), row in sorted(results.items())]
 
 
 @mcp.tool
@@ -2184,45 +2122,18 @@ async def semaphore_run_template(
     message: str = "Started by ChatGPT HomeLab MCP",
 ) -> Any:
     """
-    Start an existing Semaphore task template.
-
-    This is a state-changing operation. It can ONLY run templates explicitly
-    allowlisted in SEMAPHORE_ALLOWED_TEMPLATES. Arbitrary playbooks, shell
-    commands, inventory overrides, branches, tags, limits, survey variables,
-    and extra arguments are intentionally not accepted by this tool.
+    Start an existing authorized Semaphore template. Native project:* scope
+    requires the dedicated HomeLab project and fixed-execution settings.
+    No arbitrary playbook, shell command, inventory, branch, or argument overrides.
     """
-    allowed = semaphore_allowed_template_pairs()
-    if (
-        not semaphore_allow_all_templates()
-        and (project_id, template_id) not in allowed
-    ):
-        raise PermissionError(
-            f"Semaphore template {project_id}:{template_id} is not allowlisted."
-        )
-
-    template = await semaphore_get(
-        f"/project/{project_id}/templates/{template_id}"
-    )
-
+    template = await authorize_semaphore(
+        semaphore_get, SEMAPHORE_ALLOWED_TEMPLATES_RAW, project_id, template_id,
+        SEMAPHORE_URL, SEMAPHORE_VERIFY_SSL)
     safe_message = message.strip()[:500] or "Started by ChatGPT HomeLab MCP"
-    task = await semaphore_post(
-        f"/project/{project_id}/tasks",
-        {
-            "template_id": template_id,
-            "message": safe_message,
-        },
-    )
-
-    return {
-        "started": True,
-        "project_id": project_id,
-        "template_id": template_id,
-        "template_name": (
-            template.get("name") if isinstance(template, dict) else None
-        ),
-        "message": safe_message,
-        "task": task,
-    }
+    task = await semaphore_post(f"/project/{project_id}/tasks",
+        {"template_id": template_id, "message": safe_message})
+    return {"started": True, "project_id": project_id, "template_id": template_id,
+            "template_name": template.get("name"), "message": safe_message, "task": task}
 
 
 # -------------------------
