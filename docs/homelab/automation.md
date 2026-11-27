@@ -241,3 +241,37 @@ Good candidates:
 - pull-request creation.
 
 Secrets must remain in Semaphore or another secret store and must not be committed to Git or returned through MCP output.
+
+
+### Stage 2 diagnostics (proposed November 27, 2026)
+
+The first expansion adds cron schedule metadata (no command or description),
+session-visible cron middleware job history (not the host journal), exact
+inventoried ZFS dataset-root stat metadata (no arbitrary paths or file
+contents), and installed application container inventory (no console access).
+Historical reporting accepts either dictionary samples or legend-aligned
+array samples, otherwise reports unknown. The four new actions remain
+read-only and require the deployed API version and corresponding read roles.
+The cron history endpoint cannot prove an ordinary scheduled cron run.
+
+The owner has requested additional controlled administrative and shell
+execution capabilities. Implement these separately: fixed-purpose native API
+operations with explicit target validation and write enablement, and approved
+Semaphore templates or narrowly scoped scripts for host diagnostics, backup
+verification and restoration. No generic root shell, arbitrary RPC proxy,
+Docker socket, credential disclosure, or self-redeployment. Keep actual
+authorization and allowlists enforced by the backend. Destructive operations
+remain outside automatic execution. Preserve an independent recovery path.
+Raw database files are not a substitute for consistent logical backups.
+
+Current migration evidence (owner report, November 27): selected personal
+files, audiobooks and application files passed checksum comparison; the
+nightly file backup reported successful completion at 02:00; primary hourly
+and backup daily snapshot tasks reported successful runs. The sample restore,
+database backups, full media coverage and offsite protection remain
+unverified or out of scope. These are dated observations, not ongoing state.
+The new application datasets require their own snapshot and backup coverage.
+
+Deployment requires CI, merge, image publication, manual redeploy outside the
+active MCP tunnel, action refresh and live validation. Update bundled and
+standalone skills only after reconciling the actual deployed capabilities.
