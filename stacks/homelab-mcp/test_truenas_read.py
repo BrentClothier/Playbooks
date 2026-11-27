@@ -286,5 +286,57 @@ class TrueNASAdminTests(unittest.IsolatedAsyncioTestCase):
                 await tn._read(method, [])
 
 
+
+class TrueNASDirectoryTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.env = patch.dict(os.environ, {"TRUENAS_DIAGNOSTIC_DATASETS": "tank/data"}, clear=True)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    async def test_invalid_or_unapproved_paths_denied_before_rpc(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            for dataset, relative in (("tank/other", ""), ("../etc", ""), ("tank/data", "../etc"),
+                                      ("tank/data", "/etc"), ("tank/data", ".zfs/snapshot"),
+                                      ("tank/data", "foo//bar"), ("tank/data", "a/b/c/d/e")):
+                with self.assertRaises(ValueError):
+                    await tn._diagnostic_directory(dataset, relative)
+            read.assert_not_awaited()
+
+    async def test_child_symlink_and_nested_mount_denied(self):
+        with patch.object(tn, "_dataset_root_stat", new_callable=AsyncMock), \
+                patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            for row in ({"realpath": "/etc", "type": "DIRECTORY", "is_mountpoint": False},
+                        {"realpath": "/mnt/tank/data/sub", "type": "DIRECTORY", "is_mountpoint": True},
+                        {"realpath": "/mnt/tank/data/sub", "type": "SYMLINK", "is_mountpoint": False}):
+                read.return_value = row
+                with self.assertRaises(ValueError):
+                    await tn._diagnostic_directory("tank/data", "sub")
+
+    async def test_list_entries_bounds_and_projection(self):
+        with patch.object(tn, "_diagnostic_directory", new_callable=AsyncMock) as directory, \
+                patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            directory.return_value = "/mnt/tank/data"
+            read.return_value = [{"name": "sample", "type": "FILE", "size": 3,
+                                  "secret": "hidden", "path": "/secret"}]
+            result = await tn._directory_entries("tank/data", "", 999, -1)
+            self.assertEqual(result["limit"], 200)
+            self.assertEqual(result["offset"], 0)
+            self.assertEqual(result["items"], [{"name": "sample", "type": "FILE", "size": 3}])
+            self.assertNotIn("hidden", json.dumps(result))
+
+    async def test_acl_numeric_projection(self):
+        with patch.object(tn, "_diagnostic_directory", new_callable=AsyncMock) as directory, \
+                patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            directory.return_value = "/mnt/tank/data"
+            read.return_value = {"path": "/mnt/tank/data", "uid": 1000, "gid": 1000,
+                "acltype": "POSIX1E", "user": "hidden",
+                "acl": [{"tag": "USER", "id": 1000, "default": False,
+                         "perms": {"READ": True, "WRITE": False, "secret": "hidden"}}]}
+            result = await tn._directory_acl("tank/data")
+            self.assertEqual(result["entries"][0]["perms"], {"READ": True, "WRITE": False})
+            self.assertNotIn("hidden", json.dumps(result))
+            read.assert_awaited_once_with("filesystem.getacl", ["/mnt/tank/data", True, False])
+
+
 if __name__ == "__main__":
     unittest.main()
