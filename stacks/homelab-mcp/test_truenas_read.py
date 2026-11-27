@@ -487,6 +487,13 @@ class TrueNASSemaphoreDeployTests(unittest.IsolatedAsyncioTestCase):
                         await tn._deploy_semaphore(self.confirm)
             fetch.assert_not_awaited()
 
+    def test_pinned_source_matches_approved_git_blob(self):
+        source = Path(__file__).resolve().parents[1] / "semaphore-truenas" / "docker-compose.yml"
+        data = source.read_bytes()
+        self.assertEqual(tn.hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest(), tn._SEMAPHORE_BLOB)
+        rendered = tn._render_semaphore(data.decode("utf-8"), tn._semaphore_secrets())
+        self.assertNotIn("${", rendered)
+
     def test_render_only_expected_placeholders(self):
         values = tn._semaphore_secrets()
         result = tn._render_semaphore(self.template, values)
