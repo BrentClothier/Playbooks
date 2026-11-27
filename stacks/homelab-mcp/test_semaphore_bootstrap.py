@@ -24,7 +24,8 @@ class BootstrapTests(unittest.IsolatedAsyncioTestCase):
     def handler(self, request):
         path = request.url.path.removeprefix("/api")
         if request.method == "GET":
-            return httpx.Response(200, json=self.rows.get(path))
+            return httpx.Response(200, content=json.dumps(self.rows.get(path)),
+                                  headers={"Content-Type": "application/json"})
         if request.method != "POST":
             raise AssertionError("unexpected write")
         payload = json.loads(request.content)
