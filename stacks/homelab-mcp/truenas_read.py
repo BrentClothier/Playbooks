@@ -205,7 +205,7 @@ async def _read(method, params=None):
 # Stage 3: dedicated credentials, exact server-configured targets, no generic
 # tool accepting RPC names or payloads. No destructive storage methods.
 _WRITE_METHODS = frozenset({"pool.dataset.create", "pool.snapshot.create",
-                            "app.start", "app.stop", "app.create"})
+                            "app.start", "app.stop"})
 _PROTECTED_APPS = frozenset({"homelab-mcp", "tailscale", "semaphore",
                             "nginx", "nginx-proxy-manager", "authentik",
                             "portainer", "secure-mcp-tunnel", "mcp-tunnel"})
@@ -260,6 +260,10 @@ async def _exact_dataset(name, required=True):
 async def _admin_rpc(method, params):
     if method not in _WRITE_METHODS:
         raise ValueError("TrueNAS write method is not allowed.")
+    return await _admin_exchange(method, params)
+
+
+async def _admin_exchange(method, params):
     credentials = _write_credentials()
     try:
         async with asyncio.timeout(35):
@@ -548,7 +552,7 @@ async def _deploy_semaphore(confirmation):
         await _semaphore_preflight(values[-1])
         # Mark before send: never replay after ambiguous response.
         _SEMAPHORE_JOB = {"state": "SUBMITTED_OR_UNKNOWN"}
-        result = await _admin_rpc("app.create", [{"app_name": "semaphore",
+        result = await _admin_exchange("app.create", [{"app_name": "semaphore",
             "custom_app": True, "custom_compose_config_string": rendered}])
         _SEMAPHORE_JOB = result
         return {"app": "semaphore", "revision": _SEMAPHORE_REV,
