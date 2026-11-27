@@ -3,6 +3,7 @@ import asyncio
 import base64
 import hashlib
 import ipaddress
+from pathlib import Path
 import httpx
 from contextlib import asynccontextmanager
 import json
@@ -437,6 +438,7 @@ _SEMAPHORE_LOCK = asyncio.Lock()
 _SEMAPHORE_IMAGES = {"semaphore": "semaphoreui/semaphore:v2.20.23",
                      "postgres": "postgres:16.16-trixie"}
 _SEMAPHORE_JOB = None
+_SEMAPHORE_ATTEMPT = Path('/data/semaphore-create-attempt.json')
 
 
 def _semaphore_secrets():
@@ -536,6 +538,21 @@ async def _semaphore_preflight(bind):
         raise ValueError("Bind address is not present in live TrueNAS interface inventory.")
 
 
+
+def _record_semaphore_attempt():
+    # Persistent nonsecret fence across restarts. Owner must inspect the app,
+    # jobs and datasets before manually clearing a failed/unknown attempt.
+    try:
+        with _SEMAPHORE_ATTEMPT.open("x", encoding="utf-8") as f:
+            json.dump({"revision": _SEMAPHORE_REV}, f)
+            f.flush()
+            os.fsync(f.fileno())
+    except FileExistsError:
+        raise ValueError("Prior Semaphore create attempt recorded; inspect live state before any retry.") from None
+    except OSError:
+        raise RuntimeError("Cannot persist the Semaphore create safety record; no deployment attempted.") from None
+
+
 async def _deploy_semaphore(confirmation):
     global _SEMAPHORE_JOB
     _write_credentials()
@@ -545,12 +562,13 @@ async def _deploy_semaphore(confirmation):
         raise ValueError("Confirm exact create action, app and approved Git revision.")
     values = _semaphore_secrets()
     async with _SEMAPHORE_LOCK:
-        if _SEMAPHORE_JOB is not None:
+        if _SEMAPHORE_JOB is not None or _SEMAPHORE_ATTEMPT.exists():
             raise ValueError("Previous create was attempted; inspect app and job status before any retry.")
         template = await _semaphore_template()
         rendered = _render_semaphore(template, values)
         await _semaphore_preflight(values[-1])
         # Mark before send: never replay after ambiguous response.
+        _record_semaphore_attempt()
         _SEMAPHORE_JOB = {"state": "SUBMITTED_OR_UNKNOWN"}
         result = await _admin_exchange("app.create", [{"app_name": "semaphore",
             "custom_app": True, "custom_compose_config_string": rendered}])
@@ -564,6 +582,7 @@ async def _semaphore_status():
     out = {"app": "semaphore", "approved_revision": _SEMAPHORE_REV,
            "approved_blob": _SEMAPHORE_BLOB, "installed": app is not None,
            "last_create_job": _SEMAPHORE_JOB,
+           "previous_attempt_recorded": _SEMAPHORE_ATTEMPT.exists(),
            "coverage": "Runtime and image-tag comparison only; not full Compose drift or functional health."}
     if app is None:
         return out
