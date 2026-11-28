@@ -643,5 +643,112 @@ class AppDeploymentPreflightTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result["ready_to_deploy"])
 
 
+
+class CatalogManagementTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mount_projection_no_raw_values(self):
+        mount = {"source": "/mnt/pool/appdata/plex", "destination": "/config",
+                 "type": "bind", "mode": "rw", "options": "secret-value"}
+        with patch.object(tn, "_installed_app", new_callable=AsyncMock,
+                          return_value={"state": "RUNNING", "config": {"token": "secret-value"},
+                                        "active_workloads": {"volumes": [mount,
+                                            {"source": "//user:secret-value@nas/share", "type": "volume",
+                                             "destination": "/data", "mode": "secret-value"}],
+                                            "container_details": [{"service_name": "plex", "volume_mounts": [mount]}]}}):
+            out = await tn._app_mounts("plex")
+            self.assertEqual(out["volumes"][0]["source"], "/mnt/pool/appdata/plex")
+            self.assertEqual(out["containers"][0]["mounts"][0]["destination"], "/config")
+            self.assertIsNone(out["volumes"][1]["source"])
+            self.assertNotIn("secret-value", json.dumps(out))
+
+    async def test_mount_unknown_not_empty(self):
+        with patch.object(tn, "_installed_app", new_callable=AsyncMock, return_value={}):
+            out = await tn._app_mounts("plex")
+            self.assertIsNone(out["volumes"])
+
+    async def test_upgrade_preview_is_exact_and_read_only(self):
+        with patch.object(tn, "_installed_app", new_callable=AsyncMock,
+                          return_value={"custom_app": False, "version": "1.0.0"}), \
+                patch.object(tn, "_read", new_callable=AsyncMock,
+                             return_value={"upgrade_version": "1.0.1", "upgrade_human_version": "v2",
+                                           "available_versions_for_upgrade": [{"version": "1.0.1"}],
+                                           "changelog": "secret-value"}), \
+                patch.object(tn, "_admin_exchange", new_callable=AsyncMock) as write:
+            out = await tn._upgrade_preview("plex", "1.0.1")
+            self.assertTrue(out["target_offered"])
+            self.assertFalse(out["write_authorized"])
+            self.assertNotIn("secret-value", json.dumps(out))
+            with self.assertRaises(ValueError):
+                await tn._upgrade_preview("plex", "latest")
+            write.assert_not_awaited()
+
+    def test_qbit_profile(self):
+        with patch.dict(os.environ, {"TRUENAS_QBITTORRENT_BIND_ADDRESS": "192.168.1.10"}):
+            v = tn._qbit_values(tn._qbit_bind())
+        self.assertFalse(v["network"]["host_network"])
+        self.assertEqual(v["network"]["web_port"]["host_ips"], ["192.168.1.10"])
+        self.assertEqual(v["network"]["bt_port"]["port_number"], 51413)
+        self.assertEqual(v["storage"]["config"]["host_path_config"]["path"], "/mnt/" + tn._QBIT_CONFIG)
+        self.assertEqual(v["storage"]["downloads"]["mount_path"], "/downloads")
+        self.assertFalse(v["storage"]["downloads"]["host_path_config"]["acl_enable"])
+        for value in ("0.0.0.0", "8.8.8.8", "127.0.0.1", "::1"):
+            with patch.dict(os.environ, {"TRUENAS_QBITTORRENT_BIND_ADDRESS": value}):
+                with self.assertRaises(ValueError):
+                    tn._qbit_bind()
+        self.assertFalse(tn._qbit_owned({"uid": 0, "gid": 0, "mode": 0o777, "acl": False}))
+        self.assertFalse(tn._qbit_owned({"uid": 1000, "gid": 1000, "mode": 0o700, "acl": True}))
+        self.assertTrue(tn._qbit_owned({"uid": 1000, "gid": 1000, "mode": 0o700, "acl": False}))
+
+    async def test_qbit_preflight_fails_closed(self):
+        with patch.object(tn, "_installed_app", new_callable=AsyncMock, return_value=None), \
+                patch.object(tn, "_read", new_callable=AsyncMock, return_value=[]), \
+                patch.object(tn, "_dataset_root_stat", new_callable=AsyncMock, side_effect=ValueError("missing")), \
+                patch.object(tn, "_diagnostic_directory", new_callable=AsyncMock, side_effect=ValueError("missing")), \
+                patch.object(tn, "_app_host_resources", new_callable=AsyncMock, return_value={"app_used_ports": None}), \
+                patch.object(tn, "_qbit_bind", side_effect=ValueError("missing")):
+            out = await tn._qbit_preflight()
+            self.assertFalse(out["preflight_passed"])
+            for check in ("catalog_version_verified", "empty_owned_config", "download_root_owned",
+                          "app_ports_available", "bind_address_present", "independent_replication_configured"):
+                self.assertFalse(out["checks"][check])
+
+    async def test_qbit_disabled_wrong_confirmation_and_failed_preflight(self):
+        with patch.object(tn, "_write_credentials"), \
+                patch.object(tn, "_admin_exchange", new_callable=AsyncMock) as write, \
+                patch.object(tn, "_qbit_preflight", new_callable=AsyncMock, return_value={"preflight_passed": False}), \
+                tempfile.TemporaryDirectory() as tmp, \
+                patch.object(tn, "_QBIT_ATTEMPT", Path(tmp) / "attempt.json"):
+            for enabled, confirm in (("false", "create-fresh:qbittorrent:community:1.4.24"),
+                                     ("true", "wrong"),
+                                     ("true", "create-fresh:qbittorrent:community:1.4.24")):
+                with patch.dict(os.environ, {"TRUENAS_QBITTORRENT_DEPLOY_ENABLED": enabled}):
+                    with self.assertRaises(ValueError):
+                        await tn._deploy_qbit(confirm)
+            write.assert_not_awaited()
+            self.assertFalse(tn._QBIT_ATTEMPT.exists())
+
+    async def test_qbit_fixed_create_and_no_replay(self):
+        confirm = "create-fresh:qbittorrent:community:1.4.24"
+        with patch.object(tn, "_write_credentials"), \
+                patch.dict(os.environ, {"TRUENAS_QBITTORRENT_DEPLOY_ENABLED": "true",
+                                        "TRUENAS_QBITTORRENT_BIND_ADDRESS": "192.168.1.10"}), \
+                patch.object(tn, "_qbit_preflight", new_callable=AsyncMock, return_value={"preflight_passed": True}), \
+                patch.object(tn, "_admin_exchange", new_callable=AsyncMock, side_effect=RuntimeError("unknown")) as write, \
+                tempfile.TemporaryDirectory() as tmp, \
+                patch.object(tn, "_QBIT_ATTEMPT", Path(tmp) / "attempt.json"):
+            with self.assertRaises(RuntimeError):
+                await tn._deploy_qbit(confirm)
+            method, params = write.call_args.args
+            self.assertEqual(method, "app.create")
+            self.assertEqual(params[0]["app_name"], "qbittorrent")
+            self.assertEqual(params[0]["catalog_app"], "qbittorrent")
+            self.assertEqual(params[0]["train"], "community")
+            self.assertEqual(params[0]["version"], "1.4.24")
+            self.assertFalse(params[0]["custom_app"])
+            self.assertTrue(tn._QBIT_ATTEMPT.exists())
+            with self.assertRaises(ValueError):
+                await tn._deploy_qbit(confirm)
+            write.assert_awaited_once()
+
+
 if __name__ == "__main__":
     unittest.main()
