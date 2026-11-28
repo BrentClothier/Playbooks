@@ -64,7 +64,7 @@ _READ_METHODS = frozenset({
     "rsynctask.query", "reporting.get_data", "pool.import_find",
     "update.status", "vm.status", "nfs.client_count",
     "cronjob.query", "filesystem.stat", "app.container_console_choices", "app.available",
-    "filesystem.listdir", "filesystem.getacl", "app.used_ports", "app.gpu_choices", "app.upgrade_summary", "app.ip_choices",
+    "filesystem.listdir", "filesystem.getacl", "app.used_ports", "app.gpu_choices", "app.upgrade_summary", "app.ip_choices", "network.configuration.config", "route.system_routes",
 })
 
 
@@ -1373,6 +1373,30 @@ def register(mcp):
     async def truenas_plex_migration_preflight():
         """Read fixed Plex destination preflight only. Never establishes source config recovery or authorizes deployment."""
         return await _plex_migration_preflight()
+
+    @mcp.tool
+    async def truenas_network_configuration():
+        """Read configured and effective default gateways and DNS servers. No writes or hosts/proxy settings."""
+        row = await _read("network.configuration.config", [])
+        keys = ("ipv4gateway", "ipv6gateway", "nameserver1", "nameserver2", "nameserver3")
+        if not isinstance(row, dict):
+            raise RuntimeError("Unexpected network configuration.")
+        state = row.get("state")
+        return {"configured": _fields(row, keys),
+                "effective": _fields(state, keys) if isinstance(state, dict) else None,
+                "coverage": "Reported network configuration and state only."}
+
+    @mcp.tool
+    async def truenas_routes():
+        """Read bounded reported routing table, without changing routes."""
+        raw = await _read("route.system_routes", [])
+        return _rows(raw, ("network", "netmask", "gateway", "interface",
+                          "table_id", "scope", "preferred_source"), 200)
+
+    @mcp.tool
+    async def truenas_catalog_bind_choices():
+        """Read actual catalog host IP choices; unknown if API unavailable."""
+        return {"choices": await _app_bind_choices(), "coverage": "Catalog IP choices only, no network changes."}
 
     @mcp.tool
     async def truenas_app_mounts(app_name: str):
