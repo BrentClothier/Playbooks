@@ -698,6 +698,54 @@ class CatalogManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(tn._qbit_owned({"uid": 1000, "gid": 1000, "mode": 0o700, "acl": True}))
         self.assertTrue(tn._qbit_owned({"uid": 1000, "gid": 1000, "mode": 0o700, "acl": False}))
 
+    async def test_catalog_bind_choices_fail_closed(self):
+        for raw, expected in (({"0.0.0.0": "Any", "::": "Any"}, ["0.0.0.0", "::"]),
+                              ({"192.168.1.10": "Static"}, ["192.168.1.10"]),
+                              ({}, []), ({"not-an-ip": "secret-value"}, None),
+                              ([], None)):
+            with patch.object(tn, "_read", new_callable=AsyncMock, return_value=raw) as read:
+                self.assertEqual(await tn._app_bind_choices(), expected)
+                read.assert_awaited_once_with("app.ip_choices", [])
+        with patch.object(tn, "_read", new_callable=AsyncMock, side_effect=RuntimeError("unavailable")):
+            self.assertIsNone(await tn._app_bind_choices())
+
+    async def test_qbit_preflight_rejects_dhcp_only_address(self):
+        bind = "192.168.1.10"
+        async def read(method, params):
+            if method == "app.available":
+                return [{"name": "qbittorrent", "train": "community",
+                         "latest_version": tn._QBIT_VERSION, "healthy": True}]
+            if method == "filesystem.listdir":
+                return []
+            if method == "filesystem.stat":
+                return {"uid": 1000, "gid": 1000, "acl": False, "mode": 0o700,
+                        "realpath": "/test/download", "type": "DIRECTORY"}
+            if method == "interface.query":
+                return [{"state": {"aliases": [{"address": bind}]}}]
+            if method == "app.ip_choices":
+                return {"0.0.0.0": "Any", "::": "Any"}
+            if method == "pool.snapshottask.query":
+                return [{"enabled": True, "recursive": True}]
+            if method == "replication.query":
+                return [{"enabled": True, "recursive": True, "direction": "PUSH",
+                         "transport": "LOCAL", "source_datasets": ["USB_Storage_Space/appdata"],
+                         "target_dataset": "Backup/appdata"}]
+            raise AssertionError(method)
+        with patch.object(tn, "_read", side_effect=read), \
+                patch.object(tn, "_installed_app", new_callable=AsyncMock, return_value=None), \
+                patch.object(tn, "_dataset_root_stat", new_callable=AsyncMock,
+                             return_value={"stat": {"uid": 1000, "gid": 1000, "acl": False, "mode": 0o700}}), \
+                patch.object(tn, "_diagnostic_directory", new_callable=AsyncMock, return_value="/test/download"), \
+                patch.object(tn, "_app_host_resources", new_callable=AsyncMock, return_value={"app_used_ports": []}), \
+                patch.object(tn, "_qbit_bind", return_value=bind), \
+                tempfile.TemporaryDirectory() as tmp, \
+                patch.object(tn, "_QBIT_ATTEMPT", Path(tmp) / "attempt.json"):
+            out = await tn._qbit_preflight()
+            self.assertTrue(out["checks"]["bind_address_present"])
+            self.assertFalse(out["checks"]["bind_address_catalog_allowed"])
+            self.assertFalse(out["preflight_passed"])
+            self.assertTrue(all(v for k, v in out["checks"].items() if k != "bind_address_catalog_allowed"))
+
     async def test_qbit_preflight_fails_closed(self):
         with patch.object(tn, "_installed_app", new_callable=AsyncMock, return_value=None), \
                 patch.object(tn, "_read", new_callable=AsyncMock, return_value=[]), \

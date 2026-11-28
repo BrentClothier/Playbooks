@@ -64,7 +64,7 @@ _READ_METHODS = frozenset({
     "rsynctask.query", "reporting.get_data", "pool.import_find",
     "update.status", "vm.status", "nfs.client_count",
     "cronjob.query", "filesystem.stat", "app.container_console_choices", "app.available",
-    "filesystem.listdir", "filesystem.getacl", "app.used_ports", "app.gpu_choices", "app.upgrade_summary",
+    "filesystem.listdir", "filesystem.getacl", "app.used_ports", "app.gpu_choices", "app.upgrade_summary", "app.ip_choices",
 })
 
 
@@ -1076,6 +1076,23 @@ def _qbit_owned(stat):
             and stat["mode"] & 0o700 == 0o700)
 
 
+async def _app_bind_choices():
+    # This is the catalog's IP choice source, not all configured or DHCP IPs.
+    # Preserve unknown when unsupported or malformed; never substitute wildcards.
+    try:
+        raw = await _read("app.ip_choices", [])
+    except RuntimeError:
+        return None
+    if not isinstance(raw, dict) or len(raw) > 256:
+        return None
+    try:
+        if not all(isinstance(k, str) and isinstance(v, str) for k, v in raw.items()):
+            return None
+        return sorted({str(ipaddress.ip_address(k)) for k in raw})
+    except ValueError:
+        return None
+
+
 async def _qbit_preflight():
     app = await _installed_app("qbittorrent", required=False)
     catalog = await _read("app.available", [[["name", "=", "qbittorrent"]], {"limit": 20}])
@@ -1100,6 +1117,7 @@ async def _qbit_preflight():
     ports = (await _app_host_resources())["app_used_ports"]
     ports_ok = isinstance(ports, list) and not any(p in ports for p in (30024, 51413))
     bind_ok = False
+    bind = None
     try:
         bind = _qbit_bind()
         rows = await _read("interface.query", [])
@@ -1108,6 +1126,8 @@ async def _qbit_preflight():
             if isinstance(a, dict))
     except (RuntimeError, ValueError):
         pass
+    choices = await _app_bind_choices()
+    catalog_bind_ok = isinstance(choices, list) and bind is not None and bind in choices
     tasks = await _read("pool.snapshottask.query", [[["dataset", "=", "USB_Storage_Space/appdata"]], {"limit": 20}])
     snapshot_ok = isinstance(tasks, list) and any(isinstance(t, dict) and
         t.get("enabled") is True and t.get("recursive") is True for t in tasks)
@@ -1120,11 +1140,13 @@ async def _qbit_preflight():
     checks = {"app_absent": app is None, "catalog_version_verified": catalog_ok,
               "empty_owned_config": config_ok, "download_root_owned": downloads_ok,
               "app_ports_available": ports_ok, "bind_address_present": bind_ok,
+              "bind_address_catalog_allowed": catalog_bind_ok,
               "recursive_snapshots_enabled": snapshot_ok, "independent_replication_configured": replication_ok,
               "no_prior_create_attempt": not _QBIT_ATTEMPT.exists()}
     return {"app": "qbittorrent", "version": _QBIT_VERSION, "checks": checks,
             "preflight_passed": all(checks.values()),
-            "coverage": "Fresh config only. Owner must verify host port conflicts, effective permissions, existing data preservation and LAN firewall. No migration, router changes or VPN."}
+            "catalog_bind_choices": choices,
+            "coverage": "Fresh config only. Require exact private IP in live interface and catalog choices; DHCP may not qualify. Never fall back to wildcard. Owner must verify host port conflicts, effective permissions, existing data preservation and LAN firewall. No migration, router changes or VPN."}
 
 
 async def _deploy_qbit(confirmation):
