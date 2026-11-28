@@ -798,5 +798,144 @@ class CatalogManagementTests(unittest.IsolatedAsyncioTestCase):
             write.assert_awaited_once()
 
 
+
+class ReviewedCatalogTests(unittest.IsolatedAsyncioTestCase):
+    def test_abs_profile_values(self):
+        v = tn._abs_values("192.168.1.10")
+        self.assertEqual(v["run_as"], {"user": 1000, "group": 1000})
+        self.assertEqual(v["network"]["web_port"],
+                         {"bind_mode": "published", "port_number": 30067,
+                          "host_ips": ["192.168.1.10"]})
+        self.assertEqual(v["network"]["opds_port"]["bind_mode"], "")
+        self.assertEqual(v["network"]["networks"], [])
+        self.assertEqual(v["storage"]["config"]["host_path_config"]["path"],
+                         "/mnt/" + tn._ABS_ROOT + "/config")
+        self.assertEqual(v["storage"]["metadata"]["host_path_config"]["path"],
+                         "/mnt/" + tn._ABS_ROOT + "/metadata")
+        additional = v["storage"]["additional_storage"]
+        self.assertEqual([x["mount_path"] for x in additional],
+                         ["/podcasts", "/mnt/shared/audiobooks"])
+        self.assertFalse(additional[0]["read_only"])
+        self.assertTrue(additional[1]["read_only"])
+        for x in [v["storage"]["config"], v["storage"]["metadata"], *additional]:
+            self.assertFalse(x["host_path_config"]["acl_enable"])
+        for address in ("", "0.0.0.0", "::", "8.8.8.8", "127.0.0.1"):
+            with patch.dict(os.environ, {"TRUENAS_CATALOG_BIND_ADDRESS": address}):
+                with self.assertRaises(ValueError):
+                    tn._catalog_bind()
+
+    async def test_profile_dispatch_and_enablement(self):
+        with patch.dict(os.environ, {"TRUENAS_CATALOG_CREATE_PROFILES": "",
+                                     "TRUENAS_QBITTORRENT_DEPLOY_ENABLED": "false"}):
+            self.assertTrue(all(not x["enabled"] for x in tn._catalog_profiles()["profiles"]))
+        with patch.object(tn, "_qbit_preflight", new_callable=AsyncMock,
+                          return_value={"preflight_passed": True}) as qbit, \
+                patch.object(tn, "_deploy_qbit", new_callable=AsyncMock) as deploy:
+            self.assertTrue((await tn._catalog_preflight("qbittorrent-fresh"))["preflight_passed"])
+            qbit.assert_awaited_once()
+            await tn._catalog_create("qbittorrent-fresh", "confirm")
+            deploy.assert_awaited_once_with("confirm")
+        for fn, args in ((tn._catalog_preflight, ("unknown",)),
+                         (tn._catalog_create, ("unknown", "anything"))):
+            with self.assertRaises(ValueError):
+                await fn(*args)
+
+    async def test_abs_preflight_gates(self):
+        bind = "192.168.1.10"
+        bad = None
+        async def read(method, params):
+            if method == "app.available":
+                return [{"name": "audiobookshelf", "train": "community",
+                         "latest_version": tn._ABS_VERSION, "latest_app_version": "2.38.0",
+                         "healthy": bad != "catalog"}]
+            if method == "filesystem.stat":
+                path = params[0]
+                if path.endswith("/absdatabase.sqlite"):
+                    return {"realpath": path, "type": "FILE", "uid": 1000,
+                            "gid": 1000, "mode": 0o600, "size": 0 if bad == "db" else 10}
+                if path.endswith("/audiobookshelf.tar"):
+                    return {"realpath": path, "type": "FILE", "uid": 0,
+                            "mode": 0o644 if bad == "archive" else 0o600, "size": 100}
+                if path.endswith("/audiobookshelf-migration"):
+                    return {"realpath": path, "type": "DIRECTORY", "uid": 0,
+                            "mode": 0o700, "is_mountpoint": False}
+                if path.endswith("/audiobooks"):
+                    return {"realpath": path, "type": "DIRECTORY", "uid": 0,
+                            "gid": 0, "mode": 0o700 if bad == "library" else 0o755}
+                raise AssertionError(path)
+            if method == "pool.snapshot.query":
+                name = params[0][0][2]
+                return [{"id": name, "createtxg": "2" if bad == "snapshot" and
+                         "/config@" in name else "1"}]
+            if method == "interface.query":
+                return [{"state": {"aliases": [{"address": bind}]}}]
+            if method == "app.ip_choices":
+                return {"0.0.0.0": "Any"} if bad == "bind" else {bind: "Static"}
+            if method == "pool.snapshottask.query":
+                return [{"enabled": True, "recursive": True}]
+            if method == "replication.query":
+                return [{"enabled": True, "recursive": True, "direction": "PUSH",
+                         "transport": "LOCAL", "source_datasets": ["USB_Storage_Space/appdata"],
+                         "target_dataset": "Backup/appdata"}]
+            raise AssertionError(method)
+
+        with patch.object(tn, "_read", side_effect=read), \
+                patch.object(tn, "_installed_app", new_callable=AsyncMock, return_value=None), \
+                patch.object(tn, "_dataset_root_stat", new_callable=AsyncMock,
+                             return_value={"stat": {"uid": 1000, "gid": 1000,
+                                                    "acl": False, "mode": 0o700}}), \
+                patch.object(tn, "_diagnostic_directory", new_callable=AsyncMock,
+                             return_value="/test/audiobooks"), \
+                patch.object(tn, "_app_host_resources", new_callable=AsyncMock,
+                             return_value={"app_used_ports": []}), \
+                patch.dict(os.environ, {"TRUENAS_CATALOG_BIND_ADDRESS": bind}), \
+                tempfile.TemporaryDirectory() as tmp, \
+                patch.object(tn, "_ABS_ATTEMPT", Path(tmp) / "attempt.json"):
+            out = await tn._catalog_preflight("audiobookshelf-migration")
+            self.assertTrue(out["preflight_passed"], out["checks"])
+            for bad, check in (("catalog", "catalog_version_verified"),
+                               ("db", "restored_database_present"),
+                               ("archive", "independent_archive_present"),
+                               ("library", "library_root_readable_by_mode"),
+                               ("snapshot", "matching_rollback_snapshots"),
+                               ("bind", "bind_address_catalog_allowed")):
+                out = await tn._abs_preflight()
+                self.assertFalse(out["preflight_passed"])
+                self.assertFalse(out["checks"][check])
+
+    async def test_abs_create_gates_and_no_replay(self):
+        profile = "audiobookshelf-migration"
+        with patch.object(tn, "_write_credentials"), \
+                patch.dict(os.environ, {"TRUENAS_CATALOG_BIND_ADDRESS": "192.168.1.10"}), \
+                patch.object(tn, "_abs_preflight", new_callable=AsyncMock,
+                             return_value={"preflight_passed": False}) as preflight, \
+                patch.object(tn, "_admin_exchange", new_callable=AsyncMock,
+                             side_effect=RuntimeError("ambiguous")) as write, \
+                tempfile.TemporaryDirectory() as tmp, \
+                patch.object(tn, "_ABS_ATTEMPT", Path(tmp) / "attempt.json"):
+            with patch.dict(os.environ, {"TRUENAS_CATALOG_CREATE_PROFILES": ""}):
+                with self.assertRaises(ValueError):
+                    await tn._catalog_create(profile, tn._ABS_CONFIRM)
+            with patch.dict(os.environ, {"TRUENAS_CATALOG_CREATE_PROFILES": profile}):
+                with self.assertRaises(ValueError):
+                    await tn._catalog_create(profile, "wrong")
+                with self.assertRaises(ValueError):
+                    await tn._catalog_create(profile, tn._ABS_CONFIRM)
+                write.assert_not_awaited()
+                self.assertFalse(tn._ABS_ATTEMPT.exists())
+                preflight.return_value = {"preflight_passed": True}
+                with self.assertRaises(RuntimeError):
+                    await tn._catalog_create(profile, tn._ABS_CONFIRM)
+                method, params = write.call_args.args
+                self.assertEqual(method, "app.create")
+                self.assertEqual(params[0]["app_name"], "audiobookshelf")
+                self.assertEqual(params[0]["version"], tn._ABS_VERSION)
+                self.assertFalse(params[0]["custom_app"])
+                self.assertTrue(tn._ABS_ATTEMPT.exists())
+                with self.assertRaises(ValueError):
+                    await tn._catalog_create(profile, tn._ABS_CONFIRM)
+                write.assert_awaited_once()
+
+
 if __name__ == "__main__":
     unittest.main()
