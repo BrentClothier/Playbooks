@@ -64,7 +64,7 @@ _READ_METHODS = frozenset({
     "rsynctask.query", "reporting.get_data", "pool.import_find",
     "update.status", "vm.status", "nfs.client_count",
     "cronjob.query", "filesystem.stat", "app.container_console_choices", "app.available",
-    "filesystem.listdir", "filesystem.getacl", "app.used_ports", "app.gpu_choices",
+    "filesystem.listdir", "filesystem.getacl", "app.used_ports", "app.gpu_choices", "app.upgrade_summary",
 })
 
 
@@ -966,6 +966,193 @@ async def _plex_migration_preflight():
             "coverage": "Destination-only preflight; requires separately verified legacy config, consistent backup, exact mounts/permissions, reviewed image and definition, independent host port checks and cutover authorization."}
 
 
+# Fixed catalog creation; no caller-provided values or arbitrary RPCs.
+_QBIT_VERSION = "1.4.24"
+_QBIT_CONFIG = "USB_Storage_Space/appdata/qbittorrent"
+_QBIT_ROOT = "USB_Storage_Space/subvol-105-disk-1"
+_QBIT_ATTEMPT = Path("/data/qbittorrent-create-attempt.json")
+_QBIT_LOCK = asyncio.Lock()
+
+
+async def _installed_app(name, required=True):
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name):
+        raise ValueError("Invalid application name.")
+    rows = await _read("app.query", [[["id", "=", name]], {"limit": 2,
+        "extra": {"retrieve_config": False, "include_app_schema": False}}])
+    if not isinstance(rows, list) or len(rows) > 1 or (rows and (
+            not isinstance(rows[0], dict) or rows[0].get("id") != name)):
+        raise RuntimeError("Unexpected application inventory.")
+    if not rows and required:
+        raise ValueError("Application not found.")
+    return rows[0] if rows else None
+
+
+def _mount_projection(row):
+    if not isinstance(row, dict):
+        raise RuntimeError("Malformed mount inventory.")
+    kind = row.get("type", row.get("type_"))
+    mode = row.get("mode")
+    def safe_path(value):
+        return (value if isinstance(value, str) and len(value) <= 512 and
+                re.fullmatch(r"/[A-Za-z0-9_. /-]+", value) and
+                all(p not in (".", "..") for p in value.split("/")) else None)
+    source = row.get("source")
+    return {"source": safe_path(source) if kind == "bind" and
+                isinstance(source, str) and source.startswith("/mnt/") else None,
+            "destination": safe_path(row.get("destination")),
+            "type": kind if kind in ("bind", "volume", "tmpfs") else None,
+            "mode": mode if mode in ("ro", "rw") else None}
+
+
+async def _app_mounts(name):
+    app = await _installed_app(name)
+    raw = app.get("active_workloads")
+    if not isinstance(raw, dict):
+        return {"app": name, "containers": None, "volumes": None,
+                "coverage": "Workload inventory unavailable."}
+    def mounts(rows):
+        return [_mount_projection(m) for m in rows] if isinstance(rows, list) and len(rows) <= 200 else None
+    details = raw.get("container_details")
+    projected = None
+    if isinstance(details, list) and len(details) <= 100:
+        projected = [{"service": _safe_value(c.get("service_name")),
+                      "mounts": mounts(c.get("volume_mounts"))}
+                     for c in details if isinstance(c, dict)]
+    return {"app": name, "state": app.get("state"), "containers": projected,
+            "volumes": mounts(raw.get("volumes")),
+            "coverage": "Reported runtime mounts only; not effective access, filesystem backing or GPU device inventory. No raw configs, credentials or network mount options."}
+
+
+async def _upgrade_preview(name, version):
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", version):
+        raise ValueError("Exact numeric catalog version required; no latest.")
+    app = await _installed_app(name)
+    if app.get("custom_app") is not False:
+        raise ValueError("Only catalog apps support this preview.")
+    if app.get("version") == version:
+        return {"app": name, "installed_version": version, "target_version": version,
+                "already_installed": True, "write_authorized": False}
+    raw = await _read("app.upgrade_summary", [name, {"app_version": version}])
+    if not isinstance(raw, dict) or raw.get("upgrade_version") != version:
+        raise RuntimeError("Target upgrade version not verified.")
+    versions = raw.get("available_versions_for_upgrade")
+    if not isinstance(versions, list) or len(versions) > 200:
+        raise RuntimeError("Unexpected upgrade version inventory.")
+    return {"app": name, "installed_version": app.get("version"),
+            "target_version": version, "target_human_version": _safe_value(raw.get("upgrade_human_version")),
+            "target_offered": any(isinstance(v, dict) and v.get("version") == version for v in versions),
+            "write_authorized": False,
+            "coverage": "Preview only. Require release notes, consistent backups and separate upgrade authorization."}
+
+
+def _qbit_bind():
+    try:
+        addr = ipaddress.IPv4Address(os.getenv("TRUENAS_QBITTORRENT_BIND_ADDRESS", "").strip())
+    except ValueError:
+        raise ValueError("Configure a private IPv4 bind address.") from None
+    if not any(addr in ipaddress.IPv4Network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")):
+        raise ValueError("Configure a private IPv4 bind address.")
+    return str(addr)
+
+
+def _qbit_values(bind):
+    def host(path):
+        return {"type": "host_path", "host_path_config": {"path": path, "acl_enable": False}}
+    def port(number):
+        return {"bind_mode": "published", "port_number": number, "host_ips": [bind]}
+    return {"TZ": "America/Los_Angeles", "run_as": {"user": 1000, "group": 1000},
+            "qbittorrent": {"additional_envs": []},
+            "network": {"host_network": False, "web_port": port(30024), "bt_port": port(51413),
+                        "use_https_probe": False, "networks": []},
+            "storage": {"config": host("/mnt/" + _QBIT_CONFIG),
+                        "downloads": {**host("/mnt/" + _QBIT_ROOT + "/data/download"),
+                                      "mount_path": "/downloads"}, "additional_storage": []},
+            "resources": {"limits": {"cpus": 2, "memory": 4096}}, "labels": []}
+
+
+def _qbit_owned(stat):
+    return (isinstance(stat, dict) and stat.get("uid") == 1000 and stat.get("gid") == 1000
+            and stat.get("acl") is False and type(stat.get("mode")) is int
+            and stat["mode"] & 0o700 == 0o700)
+
+
+async def _qbit_preflight():
+    app = await _installed_app("qbittorrent", required=False)
+    catalog = await _read("app.available", [[["name", "=", "qbittorrent"]], {"limit": 20}])
+    catalog_ok = isinstance(catalog, list) and any(isinstance(c, dict) and
+        c.get("name") == "qbittorrent" and c.get("train") == "community" and
+        c.get("latest_version") == _QBIT_VERSION and c.get("healthy") is True for c in catalog)
+    config_ok = False
+    try:
+        stat = (await _dataset_root_stat(_QBIT_CONFIG))["stat"]
+        rows = await _read("filesystem.listdir", ["/mnt/" + _QBIT_CONFIG, [], {"limit": 1, "select": ["name"]}])
+        config_ok = _qbit_owned(stat) and isinstance(rows, list) and not rows
+    except (RuntimeError, ValueError):
+        pass
+    downloads_ok = False
+    try:
+        path = await _diagnostic_directory(_QBIT_ROOT, "data/download")
+        stat = await _read("filesystem.stat", [path])
+        downloads_ok = (_qbit_owned(stat) and stat.get("realpath") == path
+                        and stat.get("type") == "DIRECTORY")
+    except (RuntimeError, ValueError):
+        pass
+    ports = (await _app_host_resources())["app_used_ports"]
+    ports_ok = isinstance(ports, list) and not any(p in ports for p in (30024, 51413))
+    bind_ok = False
+    try:
+        bind = _qbit_bind()
+        rows = await _read("interface.query", [])
+        bind_ok = isinstance(rows, list) and any(a.get("address") == bind
+            for r in rows if isinstance(r, dict) for a in ((r.get("state") or {}).get("aliases") or [])
+            if isinstance(a, dict))
+    except (RuntimeError, ValueError):
+        pass
+    tasks = await _read("pool.snapshottask.query", [[["dataset", "=", "USB_Storage_Space/appdata"]], {"limit": 20}])
+    snapshot_ok = isinstance(tasks, list) and any(isinstance(t, dict) and
+        t.get("enabled") is True and t.get("recursive") is True for t in tasks)
+    replication = await _read("replication.query", [])
+    replication_ok = isinstance(replication, list) and any(isinstance(t, dict) and
+        t.get("enabled") is True and t.get("recursive") is True and
+        t.get("direction") == "PUSH" and t.get("transport") == "LOCAL" and
+        "USB_Storage_Space/appdata" in (t.get("source_datasets") or []) and
+        t.get("target_dataset") == "Backup/appdata" for t in replication)
+    checks = {"app_absent": app is None, "catalog_version_verified": catalog_ok,
+              "empty_owned_config": config_ok, "download_root_owned": downloads_ok,
+              "app_ports_available": ports_ok, "bind_address_present": bind_ok,
+              "recursive_snapshots_enabled": snapshot_ok, "independent_replication_configured": replication_ok,
+              "no_prior_create_attempt": not _QBIT_ATTEMPT.exists()}
+    return {"app": "qbittorrent", "version": _QBIT_VERSION, "checks": checks,
+            "preflight_passed": all(checks.values()),
+            "coverage": "Fresh config only. Owner must verify host port conflicts, effective permissions, existing data preservation and LAN firewall. No migration, router changes or VPN."}
+
+
+async def _deploy_qbit(confirmation):
+    _write_credentials()
+    if os.getenv("TRUENAS_QBITTORRENT_DEPLOY_ENABLED") != "true":
+        raise ValueError("Catalog qBittorrent creation disabled.")
+    if confirmation != "create-fresh:qbittorrent:community:" + _QBIT_VERSION:
+        raise ValueError("Exact fresh-install confirmation required.")
+    async with _QBIT_LOCK:
+        if _QBIT_ATTEMPT.exists():
+            raise ValueError("Prior create attempt; owner must inspect before retry.")
+        if not (await _qbit_preflight())["preflight_passed"]:
+            raise ValueError("qBittorrent preflight incomplete.")
+        values = _qbit_values(_qbit_bind())
+        try:
+            with _QBIT_ATTEMPT.open("x", encoding="utf-8") as f:
+                json.dump({"version": _QBIT_VERSION}, f)
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError:
+            raise RuntimeError("Cannot persist create fence; no app submitted.") from None
+        job = await _admin_exchange("app.create", [{"app_name": "qbittorrent",
+            "catalog_app": "qbittorrent", "train": "community", "version": _QBIT_VERSION,
+            "custom_app": False, "values": values}])
+        return {"app": "qbittorrent", "version": _QBIT_VERSION, "job": job,
+                "coverage": "Creation job only. Verify mounts, login, authentication and data access separately."}
+
+
 def register(mcp):
     @mcp.tool
     async def truenas_system_info():
@@ -1164,6 +1351,26 @@ def register(mcp):
     async def truenas_plex_migration_preflight():
         """Read fixed Plex destination preflight only. Never establishes source config recovery or authorizes deployment."""
         return await _plex_migration_preflight()
+
+    @mcp.tool
+    async def truenas_app_mounts(app_name: str):
+        """Read bounded runtime mounts; no raw config or credentials."""
+        return await _app_mounts(app_name)
+
+    @mcp.tool
+    async def truenas_catalog_upgrade_preview(app_name: str, version: str):
+        """Read exact catalog upgrade availability; no changes."""
+        return await _upgrade_preview(app_name, version)
+
+    @mcp.tool
+    async def truenas_qbittorrent_preflight():
+        """Read fixed fresh-install qBittorrent catalog readiness; no writes."""
+        return await _qbit_preflight()
+
+    @mcp.tool
+    async def truenas_deploy_qbittorrent(confirmation: str):
+        """Create only fixed community qBittorrent 1.4.24, backend-enabled and preflight-passed. Confirm create-fresh:qbittorrent:community:1.4.24 after owner checks. No replacement, migration, upgrade or arbitrary values."""
+        return await _deploy_qbit(confirmation)
 
     @mcp.tool
     async def truenas_catalog_apps(name: str | None = None, limit: int = 50, offset: int = 0):
