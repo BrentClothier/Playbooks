@@ -568,5 +568,80 @@ class TrueNASSemaphoreDeployTests(unittest.IsolatedAsyncioTestCase):
             fetch.assert_not_awaited()
 
 
+
+class AppDeploymentPreflightTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pinned_source_rejects_mutable_refs_and_paths(self):
+        for revision, blob, path in (
+            ("main", "b" * 40, "stacks/plex-truenas/docker-compose.yml"),
+            ("a" * 40, "bad", "stacks/plex-truenas/docker-compose.yml"),
+            ("a" * 40, "b" * 40, "https://other.example/docker-compose.yml"),
+            ("a" * 40, "b" * 40, "stacks/../docker-compose.yml"),
+        ):
+            with patch.object(tn.httpx, "AsyncClient") as client:
+                with self.assertRaises(ValueError):
+                    await tn._pinned_compose(revision, blob, path)
+                client.assert_not_called()
+
+    async def test_semaphore_loader_keeps_existing_pin(self):
+        with patch.object(tn, "_pinned_compose", new_callable=AsyncMock,
+                          return_value="approved") as fetch:
+            self.assertEqual(await tn._semaphore_template(), "approved")
+            fetch.assert_awaited_once_with(tn._SEMAPHORE_REV, tn._SEMAPHORE_BLOB,
+                                         "stacks/semaphore-truenas/docker-compose.yml")
+
+    async def test_resources_are_bounded_and_projected(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            read.side_effect = [[32400, 3000, 32400], {
+                "0000:00:02.0": {"vendor": "Intel", "description": "iGPU", "error": None,
+                                  "gpu_details": {"private": "secret-value"}},
+                "0000:01:00.0": {"vendor": "Other", "error": "secret-value"},
+            }]
+            result = await tn._app_host_resources()
+            self.assertEqual(result["app_used_ports"], [3000, 32400])
+            self.assertEqual([x["usable_reported"] for x in result["gpu_choices"]], [True, False])
+            self.assertNotIn("secret-value", json.dumps(result))
+
+    async def test_failed_and_malformed_inventory_is_unknown(self):
+        with patch.object(tn, "_read", new_callable=AsyncMock) as read:
+            read.side_effect = [RuntimeError("private error"), {"gpu": {"vendor": "Intel"}}]
+            result = await tn._app_host_resources()
+            self.assertIsNone(result["app_used_ports"])
+            self.assertIsNone(result["gpu_choices"])
+            read.side_effect = [[True, 32400], []]
+            result = await tn._app_host_resources()
+            self.assertIsNone(result["app_used_ports"])
+            self.assertIsNone(result["gpu_choices"])
+
+    async def test_destination_does_not_authorize_deploy(self):
+        with patch.object(tn, "_diagnostic_directory", new_callable=AsyncMock), \
+                patch.object(tn, "_read", new_callable=AsyncMock) as read, \
+                patch.object(tn, "_app_host_resources", new_callable=AsyncMock,
+                             return_value={"app_used_ports": [3000], "gpu_choices": [
+                                 {"vendor": "Intel", "usable_reported": True}]}), \
+                patch.object(tn, "_admin_exchange", new_callable=AsyncMock) as write:
+            read.side_effect = [[], []]
+            result = await tn._plex_migration_preflight()
+            self.assertEqual(result["media_directories_verified"], {"movies": True, "TVShows": True})
+            self.assertFalse(result["app_installed"])
+            self.assertFalse(result["port_32400_reported_in_use"])
+            self.assertTrue(result["intel_gpu_reported_usable"])
+            self.assertFalse(result["source_config_verified"])
+            self.assertFalse(result["ready_to_deploy"])
+            write.assert_not_awaited()
+
+    async def test_missing_media_and_ports_do_not_claim_success(self):
+        with patch.object(tn, "_diagnostic_directory", new_callable=AsyncMock,
+                          side_effect=ValueError("private")), \
+                patch.object(tn, "_read", new_callable=AsyncMock,
+                             side_effect=[[], []]), \
+                patch.object(tn, "_app_host_resources", new_callable=AsyncMock,
+                             return_value={"app_used_ports": None, "gpu_choices": None}):
+            result = await tn._plex_migration_preflight()
+            self.assertIsNone(result["media_directories_verified"]["movies"])
+            self.assertIsNone(result["port_32400_reported_in_use"])
+            self.assertIsNone(result["intel_gpu_reported_usable"])
+            self.assertFalse(result["ready_to_deploy"])
+
+
 if __name__ == "__main__":
     unittest.main()
