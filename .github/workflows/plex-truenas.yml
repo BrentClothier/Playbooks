@@ -1,0 +1,41 @@
+name: Validate TrueNAS Plex Compose
+on:
+  pull_request:
+    paths:
+      - 'stacks/plex-truenas/**'
+      - '.github/workflows/plex-truenas.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'stacks/plex-truenas/**'
+      - '.github/workflows/plex-truenas.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f stacks/plex-truenas/docker-compose.yml config --quiet
+      - name: Check mount and image constraints
+        run: |
+          docker compose -f stacks/plex-truenas/docker-compose.yml config --format json > /tmp/plex.json
+          python3 - <<'PY'
+          import json
+          c = json.load(open('/tmp/plex.json'))['services']
+          assert set(c) == {'plex'}
+          p = c['plex']
+          assert p['image'] == 'plexinc/pms-docker@sha256:6d778d41daae68f89115aa87a44ae14a96b23e71a2093da173b5a9aac4091336'
+          assert p['network_mode'] == 'host'
+          assert not p.get('privileged')
+          mounts = {v['target']: v for v in p['volumes']}
+          assert set(mounts) == {'/config', '/mnt/shared/movies', '/mnt/shared/TVShows'}
+          assert mounts['/config']['source'] == '/mnt/USB_Storage_Space/appdata/plex'
+          assert not mounts['/config'].get('read_only')
+          assert all(mounts[t]['read_only'] for t in ('/mnt/shared/movies', '/mnt/shared/TVShows'))
+          assert all(v['bind']['create_host_path'] is False for v in mounts.values())
+          assert p['environment']['PLEX_UID'] == p['environment']['PLEX_GID'] == '1000'
+          assert p['environment']['CHANGE_CONFIG_DIR_OWNERSHIP'] == 'false'
+          assert 'PLEX_CLAIM' not in p['environment']
+          assert 'ALLOWED_NETWORKS' not in p['environment']
+          PY
