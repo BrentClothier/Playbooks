@@ -370,3 +370,12 @@ Next: native independent appdata replication with private destination,
 consistent Semaphore PostgreSQL dump and isolated restore test, recovery
 of the matching encryption/configuration secrets, then Git-backed app
 update and migration. Do not retire old management infrastructure yet.
+
+
+### Native application protection and migration preflight (November 27, 2026)
+
+PR #28 merged at 4211bf9dcd718d158f3065307218b5c308569c87. Owner installed the pinned PostgreSQL backup helper after verifying Git blob identity. Owner-reported first logical archive was 214,287 bytes with catalog validation successful; isolated PostgreSQL 16 restore passed and recovered 58 public-schema tables. This does not test Semaphore login, stored credential decryption, or full application recovery. MCP verified the daily 01:00 cron configuration and local recursive appdata replication at 04:00, retention 30 days. Initial replication job 4525 succeeded; all four expected destination datasets were read-only. First scheduled database backup remains unverified. No automatic logical archive expiry yet.
+
+Owner-reported SSH negative tests: forwarding explicitly administratively prohibited (exit 255), PTY allocation denied, and unrelated sudo policy lookups for Bash, Python and id each denied (exit 1). Together with earlier forced-command restore and both successful native tasks, these establish the tested restrictions. Effective password and keyboard-interactive policy remains unverified. Do not widen host execution permissions.
+
+The legacy Plex stack is recorded in Portainer, but its Servarr environment is offline and Proxmox reports the source guest stopped. API inspection returned 502 and no volumes were listed by the configured Proxmox storage content endpoint. This does not prove the source volume is destroyed. Preserve the stopped guest, investigate its backing storage and backup inventory before starting it, and locate the original Plex config and database before creating a replacement. Native media directories are on the authoritative imported pool; do not relocate or delete the underlying dataset. No Plex create/update authorization or image/path guess has been added. New read-only app host resources and fixed Plex destination preflight actions require tested MCP deployment and action refresh; the preflight cannot authorize deployment or establish source recovery. Reusable pinned Compose loading keeps immutable revision and blob checks; all actual create/update definitions must be reviewed individually.

@@ -1,6 +1,6 @@
 # TrueNAS consolidation: completed cutover and remaining gates
 
-**Status November 27, 2026:** Hardware installation and pool import are complete. The original dataset and snapshots remain authoritative; never delete the backing dataset. Independent USB backup covers selected files; checksum validation and first nightly completion were owner-reported successful. Live checks confirmed both pools online and snapshot schedules successful. The restricted Semaphore sample restore and selected legacy checksum verification passed (tasks 2 and 4). Recursive appdata snapshots are active; independent appdata and logical database backups, security negative tests and remaining application migration are pending. The historical cutover steps below are recovery context, not instructions to repeat. See storage-backups.md and architecture.md for current policy.
+**Status November 27, 2026:** Hardware installation and pool import are complete. The original dataset and snapshots remain authoritative; never delete the backing dataset. Independent USB backup covers selected files; checksum validation and first nightly completion were owner-reported successful. Live checks confirmed both pools online and snapshot schedules successful. The restricted Semaphore sample restore and selected legacy checksum verification passed (tasks 2 and 4). Recursive appdata snapshots and independent replication are active; Semaphore logical backup and isolated restore passed (owner report), and explicit SSH forwarding, PTY and unrelated sudo negative tests passed. Effective password policy, complete application recovery and remaining application migration are pending. The historical cutover steps below are recovery context, not instructions to repeat. See storage-backups.md and architecture.md for current policy.
 
 This is an operating playbook, not authorization to execute changes. Query live state at each gate. Keep secrets, private IPs, and MAC addresses out of this public repository.
 
@@ -98,3 +98,8 @@ and provision a least-privilege, user-linked key after installation.
 ## Stop and rollback
 
 Stop if a destination volume is inaccessible, a backup/restore requirement is unmet or pool health changes. Never import the same pool read-write on two hosts simultaneously. Retain rollback compatibility by avoiding feature upgrades and destructive dataset changes until verification is complete.
+
+
+## Next application: Plex (November 27, 2026)
+
+Source Servarr guest is stopped and Portainer source inspection unavailable. The configured Proxmox storage content API returned no volumes; confirm actual volume existence with owner-side storage inventory rather than assuming data loss or starting the guest. Do not install a replacement with an empty config unless the owner explicitly chooses a new server. Preserve the Plex application data, database, permissions, original container paths and server identity, and keep a private independent copy before cutover. Verify Intel GPU choice and actual transcode after migration, and retain the source until client playback is verified.

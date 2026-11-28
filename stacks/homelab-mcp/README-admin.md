@@ -82,3 +82,20 @@ revision controls for future privileged tasks. The host backup helper must
 run in an independently reviewed restricted execution context, not via
 arbitrary root SSH or a Docker socket. Legacy Humboldt bootstrap is rejected
 unless the original project ID and name match.
+
+
+### Application migration preflight
+
+The read-only truenas_app_host_resources action uses the documented 25.10
+app.used_ports and app.gpu_choices RPCs. Only bounded port numbers, vendor,
+description and reported usability are returned. Unknown is not port
+availability or GPU absence. The fixed truenas_plex_migration_preflight
+checks the already allowlisted legacy media paths, candidate config dataset
+inventory, installed app identity, port 32400 and Intel GPU choices. It never
+claims deployment readiness; source config, backup, image, container paths,
+ACLs, host port listeners, GPU device permissions and functional tests need
+separate verification. No new write RPCs, credentials, arbitrary Compose,
+installation or upgrade actions. Existing Semaphore creation continues to
+use its reviewed immutable revision and Git blob via a reusable internal
+loader. See https://api.truenas.com/v25.10/api_methods_app.used_ports.html
+and https://api.truenas.com/v25.10/api_methods_app.gpu_choices.html .

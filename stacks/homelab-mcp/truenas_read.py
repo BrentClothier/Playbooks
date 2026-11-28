@@ -64,7 +64,7 @@ _READ_METHODS = frozenset({
     "rsynctask.query", "reporting.get_data", "pool.import_find",
     "update.status", "vm.status", "nfs.client_count",
     "cronjob.query", "filesystem.stat", "app.container_console_choices", "app.available",
-    "filesystem.listdir", "filesystem.getacl",
+    "filesystem.listdir", "filesystem.getacl", "app.used_ports", "app.gpu_choices",
 })
 
 
@@ -431,8 +431,6 @@ async def _directory_acl(dataset, relative_dir=""):
 # fixed app. Adding a revision or application requires reviewing MCP source.
 _SEMAPHORE_REV = "f6bb37ba1eda27d2fa700bfabcd4ddc52e61f32a"
 _SEMAPHORE_BLOB = "ed1c7643432311c32f0ae34abe9002f722f23df2"
-_SEMAPHORE_SOURCE = ("https://raw.githubusercontent.com/BrentClothier/Playbooks/"
-    + _SEMAPHORE_REV + "/stacks/semaphore-truenas/docker-compose.yml")
 _SEMAPHORE_ROOT = "USB_Storage_Space/appdata/semaphore"
 _SEMAPHORE_LOCK = asyncio.Lock()
 _SEMAPHORE_IMAGES = {"semaphore": "semaphoreui/semaphore:v2.20.23",
@@ -465,13 +463,19 @@ def _semaphore_secrets():
     return db, admin, encryption, str(ip)
 
 
-async def _semaphore_template():
+async def _pinned_compose(revision, blob, path):
+    # Internal call sites only: never expose these inputs through MCP.
+    if (not re.fullmatch(r"[0-9a-f]{40}", revision) or
+            not re.fullmatch(r"[0-9a-f]{40}", blob) or
+            not re.fullmatch(r"stacks/[a-z0-9-]+/docker-compose\.yml", path)):
+        raise ValueError("Expected a reviewed immutable Compose source.")
+    source = "https://raw.githubusercontent.com/BrentClothier/Playbooks/" + revision + "/" + path
     data = bytearray()
     try:
         async with asyncio.timeout(15):
             async with httpx.AsyncClient(follow_redirects=False, trust_env=False,
                                          timeout=10) as client:
-                async with client.stream("GET", _SEMAPHORE_SOURCE) as resp:
+                async with client.stream("GET", source) as resp:
                     if resp.status_code != 200:
                         raise RuntimeError("Pinned Compose download failed.")
                     async for chunk in resp.aiter_bytes():
@@ -482,9 +486,14 @@ async def _semaphore_template():
         raise RuntimeError("Pinned Compose download unavailable.") from None
     # Verify the Git blob identity in addition to pinning the immutable commit.
     digest = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
-    if digest != _SEMAPHORE_BLOB:
+    if digest != blob:
         raise RuntimeError("Pinned Compose content does not match approved Git blob.")
     return data.decode("utf-8")
+
+
+async def _semaphore_template():
+    return await _pinned_compose(_SEMAPHORE_REV, _SEMAPHORE_BLOB,
+                                 "stacks/semaphore-truenas/docker-compose.yml")
 
 
 def _render_semaphore(template, values):
@@ -895,6 +904,68 @@ async def _temperatures():
 
 
 
+
+async def _app_host_resources():
+    # Missing/denied/malformed RPC is unknown rather than free or no GPU.
+    ports = None
+    gpus = None
+    try:
+        raw = await _read("app.used_ports", [])
+        if (isinstance(raw, list) and len(raw) <= 4096 and
+                all(type(p) is int and 1 <= p <= 65535 for p in raw)):
+            ports = sorted(set(raw))
+    except RuntimeError:
+        pass
+    try:
+        raw = await _read("app.gpu_choices", [])
+        if (isinstance(raw, dict) and len(raw) <= 32 and
+                all(isinstance(x, dict) and "error" in x and
+                    (x["error"] is None or isinstance(x["error"], str))
+                    for x in raw.values())):
+            gpus = [{"vendor": _safe_value(x.get("vendor")),
+                     "description": _safe_value(x.get("description")),
+                     "usable_reported": x["error"] is None}
+                    for x in raw.values()]
+    except RuntimeError:
+        pass
+    return {"app_used_ports": ports, "gpu_choices": gpus,
+            "coverage": "App-reported port use and GPU choices only; not all host listeners, device permissions or hardware transcoding tests."}
+
+
+async def _plex_migration_preflight():
+    # Fixed paths and application identity; no write, no file names or contents.
+    source = "USB_Storage_Space/subvol-105-disk-1"
+    media = {}
+    for name in ("movies", "TVShows"):
+        try:
+            await _diagnostic_directory(source, "data/" + name)
+            media[name] = True
+        except (RuntimeError, ValueError):
+            media[name] = None
+    apps = await _read("app.query", [[["id", "=", "plex"]],
+        {"limit": 2, "extra": {"retrieve_config": False, "include_app_schema": False}}])
+    if (not isinstance(apps, list) or len(apps) > 1 or
+            (apps and (not isinstance(apps[0], dict) or apps[0].get("id") != "plex"))):
+        raise RuntimeError("Unexpected Plex inventory response.")
+    host = await _app_host_resources()
+    ports = host["app_used_ports"]
+    gpus = host["gpu_choices"]
+    datasets = await _read("pool.dataset.query", [[["id", "=", "USB_Storage_Space/appdata/plex"]],
+        {"limit": 2, "extra": {"flat": True, "retrieve_user_props": False}}])
+    if (not isinstance(datasets, list) or len(datasets) > 1 or
+            (datasets and (not isinstance(datasets[0], dict) or
+                           datasets[0].get("id") != "USB_Storage_Space/appdata/plex"))):
+        raise RuntimeError("Unexpected Plex dataset inventory response.")
+    return {"app_installed": bool(apps), "media_directories_verified": media,
+            "candidate_config_dataset_exists": bool(datasets),
+            "port_32400_reported_in_use": 32400 in ports if ports is not None else None,
+            "intel_gpu_reported_usable": any(
+                isinstance(x["vendor"], str) and x["vendor"].casefold() == "intel"
+                and x["usable_reported"] for x in gpus) if gpus is not None else None,
+            "source_config_verified": False, "ready_to_deploy": False,
+            "coverage": "Destination-only preflight; requires separately verified legacy config, consistent backup, exact mounts/permissions, reviewed image and definition, independent host port checks and cutover authorization."}
+
+
 def register(mcp):
     @mcp.tool
     async def truenas_system_info():
@@ -1083,6 +1154,16 @@ def register(mcp):
     async def truenas_app_containers(app_name: str, limit: int = 50):
         """Read service/container image and state for one installed application; no console or shell access."""
         return await _app_containers(app_name, limit)
+
+    @mcp.tool
+    async def truenas_app_host_resources():
+        """Read app-reported used ports and selected GPU choices; unknown when unavailable. No raw GPU configuration or changes."""
+        return await _app_host_resources()
+
+    @mcp.tool
+    async def truenas_plex_migration_preflight():
+        """Read fixed Plex destination preflight only. Never establishes source config recovery or authorizes deployment."""
+        return await _plex_migration_preflight()
 
     @mcp.tool
     async def truenas_catalog_apps(name: str | None = None, limit: int = 50, offset: int = 0):
