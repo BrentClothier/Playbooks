@@ -1175,6 +1175,198 @@ async def _deploy_qbit(confirmation):
                 "coverage": "Creation job only. Verify mounts, login, authentication and data access separately."}
 
 
+
+# Reviewed catalog profiles. Never accept caller-supplied app values or paths.
+_ABS_VERSION = "1.6.27"
+_ABS_ROOT = "USB_Storage_Space/appdata/audiobookshelf"
+_ABS_CHILDREN = ("config", "metadata", "podcasts")
+_ABS_ATTEMPT = Path("/data/audiobookshelf-create-attempt.json")
+_ABS_LOCK = asyncio.Lock()
+_ABS_CONFIRM = "create-migrated:audiobookshelf:community:1.6.27"
+_CATALOG_PROFILES = ("qbittorrent-fresh", "audiobookshelf-migration")
+
+
+def _catalog_bind():
+    try:
+        addr = ipaddress.IPv4Address(os.getenv("TRUENAS_CATALOG_BIND_ADDRESS", "").strip())
+    except ValueError:
+        raise ValueError("Configure a private catalog IPv4 bind address.") from None
+    if not any(addr in ipaddress.IPv4Network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")):
+        raise ValueError("Configure a private catalog IPv4 bind address.")
+    return str(addr)
+
+
+def _abs_values(bind):
+    def host(path):
+        return {"type": "host_path", "host_path_config": {"path": path, "acl_enable": False}}
+    return {"TZ": "America/Los_Angeles", "run_as": {"user": 1000, "group": 1000},
+            "audiobookshelf": {"additional_envs": []},
+            "network": {"web_port": {"bind_mode": "published", "port_number": 30067,
+                                      "host_ips": [bind]},
+                        "opds_port": {"bind_mode": "", "port_number": 30256, "host_ips": []},
+                        "networks": []},
+            "storage": {"config": host("/mnt/" + _ABS_ROOT + "/config"),
+                        "metadata": host("/mnt/" + _ABS_ROOT + "/metadata"),
+                        "additional_storage": [
+                            {**host("/mnt/" + _ABS_ROOT + "/podcasts"),
+                             "mount_path": "/podcasts", "read_only": False},
+                            {**host("/mnt/" + _QBIT_ROOT + "/data/audiobooks"),
+                             "mount_path": "/mnt/shared/audiobooks", "read_only": True}]},
+            "resources": {"limits": {"cpus": 2, "memory": 4096}}, "labels": []}
+
+
+async def _abs_preflight():
+    app = await _installed_app("audiobookshelf", required=False)
+    catalog = await _read("app.available", [[["name", "=", "audiobookshelf"]], {"limit": 20}])
+    catalog_ok = isinstance(catalog, list) and any(isinstance(c, dict) and
+        c.get("name") == "audiobookshelf" and c.get("train") == "community" and
+        c.get("latest_version") == _ABS_VERSION and c.get("latest_app_version") == "2.38.0"
+        and c.get("healthy") is True for c in catalog)
+    storage_ok = {}
+    for child in _ABS_CHILDREN:
+        try:
+            storage_ok[child] = _qbit_owned((await _dataset_root_stat(_ABS_ROOT + "/" + child))["stat"])
+        except (RuntimeError, ValueError):
+            storage_ok[child] = False
+    db_ok = False
+    try:
+        path = "/mnt/" + _ABS_ROOT + "/config/absdatabase.sqlite"
+        stat = await _read("filesystem.stat", [path])
+        db_ok = (isinstance(stat, dict) and stat.get("realpath") == path
+                 and stat.get("type") == "FILE" and stat.get("uid") == 1000
+                 and stat.get("gid") == 1000 and type(stat.get("size")) is int
+                 and stat["size"] > 0 and type(stat.get("mode")) is int
+                 and stat["mode"] & 0o600 == 0o600)
+    except (RuntimeError, ValueError):
+        pass
+    snapshots_ok = False
+    try:
+        txgs = []
+        for ds in (_ABS_ROOT, *(_ABS_ROOT + "/" + c for c in _ABS_CHILDREN)):
+            name = ds + "@pre-install"
+            rows = await _read("pool.snapshot.query", [[["id", "=", name]], {"limit": 2}])
+            if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+                break
+            row = rows[0]
+            if row.get("id") != name or not row.get("createtxg"):
+                break
+            txgs.append(str(row["createtxg"]))
+        snapshots_ok = len(txgs) == 4 and len(set(txgs)) == 1
+    except (RuntimeError, ValueError):
+        pass
+    archive_ok = False
+    try:
+        await _dataset_root_stat("Backup/system")
+        directory = "/mnt/Backup/system/audiobookshelf-migration"
+        parent = await _read("filesystem.stat", [directory])
+        path = directory + "/audiobookshelf.tar"
+        stat = await _read("filesystem.stat", [path])
+        archive_ok = (isinstance(parent, dict) and parent.get("realpath") == directory
+                      and parent.get("type") == "DIRECTORY" and parent.get("is_mountpoint") is False
+                      and parent.get("uid") == 0 and type(parent.get("mode")) is int
+                      and parent["mode"] & 0o077 == 0
+                      and isinstance(stat, dict) and stat.get("realpath") == path
+                      and stat.get("type") == "FILE" and stat.get("uid") == 0
+                      and type(stat.get("mode")) is int and stat["mode"] & 0o077 == 0
+                      and type(stat.get("size")) is int and stat["size"] > 0)
+    except (RuntimeError, ValueError):
+        pass
+    library_ok = False
+    try:
+        path = await _diagnostic_directory(_QBIT_ROOT, "data/audiobooks")
+        stat = await _read("filesystem.stat", [path])
+        library_ok = (isinstance(stat, dict) and stat.get("realpath") == path
+                      and stat.get("type") == "DIRECTORY" and type(stat.get("mode")) is int
+                      and (stat["mode"] & (0o500 if stat.get("uid") == 1000 else
+                          0o050 if stat.get("gid") == 1000 else 0o005)) ==
+                          (0o500 if stat.get("uid") == 1000 else
+                          0o050 if stat.get("gid") == 1000 else 0o005))
+    except (RuntimeError, ValueError):
+        pass
+    ports = (await _app_host_resources())["app_used_ports"]
+    bind = None
+    bind_ok = False
+    try:
+        bind = _catalog_bind()
+        rows = await _read("interface.query", [])
+        bind_ok = isinstance(rows, list) and any(a.get("address") == bind
+            for r in rows if isinstance(r, dict) for a in ((r.get("state") or {}).get("aliases") or [])
+            if isinstance(a, dict))
+    except (RuntimeError, ValueError):
+        pass
+    choices = await _app_bind_choices()
+    tasks = await _read("pool.snapshottask.query", [[["dataset", "=", "USB_Storage_Space/appdata"]], {"limit": 20}])
+    replication = await _read("replication.query", [])
+    checks = {"app_absent": app is None, "catalog_version_verified": catalog_ok,
+              "restored_dataset_roots_owned": all(storage_ok.values()),
+              "restored_database_present": db_ok, "matching_rollback_snapshots": snapshots_ok,
+              "independent_archive_present": archive_ok, "library_root_readable_by_mode": library_ok,
+              "app_port_available": isinstance(ports, list) and 30067 not in ports,
+              "bind_address_present": bind_ok, "bind_address_catalog_allowed": isinstance(choices, list)
+                  and bind is not None and bind in choices,
+              "recursive_snapshots_enabled": isinstance(tasks, list) and any(isinstance(t, dict)
+                  and t.get("enabled") is True and t.get("recursive") is True for t in tasks),
+              "independent_replication_configured": isinstance(replication, list) and any(isinstance(t, dict)
+                  and t.get("enabled") is True and t.get("recursive") is True and t.get("direction") == "PUSH"
+                  and t.get("transport") == "LOCAL" and "USB_Storage_Space/appdata" in (t.get("source_datasets") or [])
+                  and t.get("target_dataset") == "Backup/appdata" for t in replication),
+              "no_prior_create_attempt": not _ABS_ATTEMPT.exists()}
+    return {"app": "audiobookshelf", "version": _ABS_VERSION, "checks": checks,
+            "preflight_passed": all(checks.values()), "storage_roots": storage_ok,
+            "catalog_bind_choices": choices,
+            "coverage": "Destination metadata only. Owner must independently confirm source stopped, archive checksum, compatible source version, SQLite integrity using target image, effective media access and host port/firewall. Does not read database or archive contents."}
+
+
+async def _catalog_preflight(profile):
+    if profile == "qbittorrent-fresh":
+        return await _qbit_preflight()
+    if profile == "audiobookshelf-migration":
+        return await _abs_preflight()
+    raise ValueError("Unknown reviewed catalog profile.")
+
+
+async def _catalog_create(profile, confirmation):
+    if profile == "qbittorrent-fresh":
+        return await _deploy_qbit(confirmation)
+    if profile != "audiobookshelf-migration":
+        raise ValueError("Unknown reviewed catalog profile.")
+    _write_credentials()
+    enabled = {x.strip() for x in os.getenv("TRUENAS_CATALOG_CREATE_PROFILES", "").split(",") if x.strip()}
+    if profile not in enabled:
+        raise ValueError("Catalog profile not enabled in backend configuration.")
+    if confirmation != _ABS_CONFIRM:
+        raise ValueError("Exact migration confirmation required after owner verification.")
+    async with _ABS_LOCK:
+        if _ABS_ATTEMPT.exists():
+            raise ValueError("Prior create attempt; owner must inspect before retry.")
+        if not (await _abs_preflight())["preflight_passed"]:
+            raise ValueError("Audiobookshelf migration preflight incomplete.")
+        values = _abs_values(_catalog_bind())
+        try:
+            with _ABS_ATTEMPT.open("x", encoding="utf-8") as f:
+                json.dump({"profile": profile, "version": _ABS_VERSION}, f)
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError:
+            raise RuntimeError("Cannot persist create fence; no app submitted.") from None
+        job = await _admin_exchange("app.create", [{"app_name": "audiobookshelf",
+            "catalog_app": "audiobookshelf", "train": "community", "version": _ABS_VERSION,
+            "custom_app": False, "values": values}])
+        return {"app": "audiobookshelf", "version": _ABS_VERSION, "job": job,
+                "coverage": "Create job only; verify mounts, login, playback, listening history and replication separately."}
+
+
+def _catalog_profiles():
+    enabled = {x.strip() for x in os.getenv("TRUENAS_CATALOG_CREATE_PROFILES", "").split(",") if x.strip()}
+    return {"profiles": [
+        {"profile": "qbittorrent-fresh", "app": "qbittorrent", "version": _QBIT_VERSION,
+         "enabled": os.getenv("TRUENAS_QBITTORRENT_DEPLOY_ENABLED") == "true",
+         "confirmation": "create-fresh:qbittorrent:community:" + _QBIT_VERSION},
+        {"profile": "audiobookshelf-migration", "app": "audiobookshelf", "version": _ABS_VERSION,
+         "enabled": "audiobookshelf-migration" in enabled, "confirmation": _ABS_CONFIRM}],
+        "coverage": "Reviewed profiles only; enabled is not authorization or preflight readiness."}
+
+
 def register(mcp):
     @mcp.tool
     async def truenas_system_info():
@@ -1417,6 +1609,21 @@ def register(mcp):
     async def truenas_deploy_qbittorrent(confirmation: str):
         """Create only fixed community qBittorrent 1.4.24, backend-enabled and preflight-passed. Confirm create-fresh:qbittorrent:community:1.4.24 after owner checks. No replacement, migration, upgrade or arbitrary values."""
         return await _deploy_qbit(confirmation)
+
+    @mcp.tool
+    async def truenas_catalog_profiles():
+        """List reviewed catalog creation profiles, exact versions and backend enablement."""
+        return _catalog_profiles()
+
+    @mcp.tool
+    async def truenas_catalog_preflight(profile: str):
+        """Read destination readiness for one reviewed profile. No writes."""
+        return await _catalog_preflight(profile)
+
+    @mcp.tool
+    async def truenas_catalog_create(profile: str, confirmation: str):
+        """Create a backend-enabled reviewed catalog profile after owner checks and live preflight. Exact confirmation from catalog_profiles required. No arbitrary values, upgrade, overwrite or deletion."""
+        return await _catalog_create(profile, confirmation)
 
     @mcp.tool
     async def truenas_catalog_apps(name: str | None = None, limit: int = 50, offset: int = 0):
