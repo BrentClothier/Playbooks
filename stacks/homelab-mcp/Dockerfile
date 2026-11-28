@@ -13,7 +13,7 @@ RUN addgroup --system mcp \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY --chown=mcp:mcp server.py truenas_read.py semaphore_bootstrap.py semaphore_policy.py .
+COPY --chown=mcp:mcp server.py truenas_read.py semaphore_bootstrap.py semaphore_policy.py unifi_network_read.py .
 
 USER mcp
 
