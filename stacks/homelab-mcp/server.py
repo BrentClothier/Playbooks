@@ -3160,6 +3160,9 @@ async def unifi_event_summary(hours: int = 24) -> Any:
 
 
 # Register the optional read-only TrueNAS integration.
+from unifi_network_read import register as register_unifi_network
+register_unifi_network(mcp, unifi_get)
+
 from truenas_read import register as register_truenas
 register_truenas(mcp)
 
