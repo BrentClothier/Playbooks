@@ -1,0 +1,33 @@
+# Candidate only; do not deploy before completing README recovery gates.
+services:
+  plex:
+    image: plexinc/pms-docker@sha256:6d778d41daae68f89115aa87a44ae14a96b23e71a2093da173b5a9aac4091336
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      TZ: America/Los_Angeles
+      PLEX_UID: "1000"
+      PLEX_GID: "1000"
+      CHANGE_CONFIG_DIR_OWNERSHIP: "false"
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      - type: bind
+        source: /mnt/USB_Storage_Space/appdata/plex
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /mnt/USB_Storage_Space/subvol-105-disk-1/data/movies
+        target: /mnt/shared/movies
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /mnt/USB_Storage_Space/subvol-105-disk-1/data/TVShows
+        target: /mnt/shared/TVShows
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /transcode:size=4g,mode=1777
